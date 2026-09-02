@@ -13,14 +13,14 @@ Chrome). Opciones:
 
 **Opción A — Python** (más simple):
 ```bash
-cd E:\fulbo
+cd fulbo
 python -m http.server 8777
 ```
 Luego abre: http://localhost:8777/index.html
 
 **Opción B — Node:**
 ```bash
-npx serve E:\fulbo
+npx serve .
 ```
 
 > Requiere conexión a internet la primera vez para cargar Three.js desde el CDN
@@ -152,9 +152,45 @@ Conecta el mando y pulsa cualquier botón para que el juego lo detecte
 ## 📁 Estructura
 
 ```
-E:\fulbo\
-├── index.html   ← el juego completo (motor + UI + estilos)
-└── LEEME.md     ← este archivo
+fulbo/
+├── index.html    ← el juego completo (motor + UI + estilos)
+├── README.md     ← este archivo
+├── vercel.json   ← configuración de despliegue
+└── .gitignore
 ```
 
 ¡A jugar! 🏆
+
+## 🚀 Despliegue
+
+El juego es un sitio **estático**: un único `index.html` sin proceso de compilación
+ni dependencias que instalar. Se publica tal cual.
+
+### GitHub
+
+```bash
+git remote add origin https://github.com/USUARIO/fulbo.git
+git push -u origin main
+```
+
+### Vercel
+
+**Opción A — desde la web (más simple):** entra en vercel.com → *Add New Project*
+→ importa el repositorio de GitHub → *Deploy*. No hay que tocar ninguna opción:
+Vercel detecta que es estático y sirve `index.html` desde la raíz. Cada `git push`
+vuelve a desplegar automáticamente.
+
+**Opción B — desde la terminal:**
+
+```bash
+npx vercel --prod
+```
+
+### GitHub Pages (alternativa gratuita)
+
+En el repositorio: *Settings* → *Pages* → *Source: Deploy from a branch* →
+rama `main`, carpeta `/ (root)`.
+
+> **Nota sobre el mando:** la API de Gamepad requiere **HTTPS** (o `localhost`).
+> Tanto Vercel como GitHub Pages sirven por HTTPS, así que los joysticks
+> funcionan sin problema una vez desplegado.
