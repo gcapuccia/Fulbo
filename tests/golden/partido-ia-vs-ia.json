@@ -1,0 +1,26 @@
+{
+  "descripcion": "Golden master: 90 s de IA vs IA, sin jugadores humanos, paso fijo de 60 Hz.",
+  "como_regenerar": "En la consola del navegador, durante un partido: __dbg.golden(90, 12345)",
+  "para_que_sirve": "Oraculo del refactor. Si una fase cambia estos hashes sin que lo hayas decidido, es un bug y sabes en que commit.",
+  "semilla": 12345,
+  "segundos": 90,
+  "ticks": 5400,
+  "dt": "1/60",
+  "marcador": [1, 1],
+  "estadisticas": { "tiros": 4, "cabezazos": 0, "despejesPortero": 2, "goles": 2, "ticksConDueno": 2663 },
+  "hash_final": "aa13ce62",
+  "hashes_por_segundo": [
+"cd701ad3","9e096673","ca38e81f","3ed7f2c5","ef12e6d2","58646877","5dfb31c2","a041be2c",
+"b44505ff","216c96c1","72849a80","e32e704d","d90ce5a5","4a4d03ae","4c953df5","82a60b79",
+"1b84b2ac","3610a2c0","98fbf09c","a83cf48e","507235dc","adefcb47","de20d713","f87e4f83",
+"6292c4de","6b094701","07b7e09f","b096a423","1c8f1641","a55188d4","2a2c1d22","3d097dd6",
+"b583b5b9","86f56c1d","11fb52af","8ec7cfe0","f8125a7d","e76d449f","5283f7d6","087738fa",
+"1e09fd24","0c88c7ca","a7b1f465","94c738ba","a2bdc017","a2bdc017","96b3d398","ce8aedec",
+"dd5559da","8438b8ef","f38997a1","731d3bdf","310a3dc0","334175ce","e567c1bd","512d2e26",
+"2b2302ea","8e24e4c6","ec60a6ad","bba99e53","ef8fa343","3d888416","1d26c2c0","eb344bf7",
+"eb344bf7","eb344bf7","76d4293d","cb95db79","db19a631","295f4fde","f7a3a935","155b38d1",
+"f03d57b5","2becdb18","d85cbe5d","dfd17083","2d56bb8f","7e3a40f1","deb7e7bd","3350e9dc",
+"c5a54a09","94e61555","92f7b72c","da9a017d","da9a017d","80ca524b","0156f666","89ada189",
+"c0b7aa18","aa13ce62"
+  ]
+}

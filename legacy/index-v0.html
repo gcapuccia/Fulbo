@@ -350,54 +350,6 @@ const FORMATION = FORMACIONES['4-3-3'];   // por defecto
 // ---------------------------------------------------------------------------
 const F = { W:68, L:105, LINE:0.12 };  // ancho, largo (metros escala)
 
-// ---------------------------------------------------------------------------
-//  DETERMINISMO — RNG sembrado, paso fijo y hash de estado (Fase 1)
-// ---------------------------------------------------------------------------
-// Sólo el azar que AFECTA A LAS REGLAS pasa por rng(). El azar cosmético
-// (piel, pelo, césped, público, confeti, estrellas) sigue usando Math.random():
-// esa separación es exactamente la frontera core/render.
-const DT = 1/60;              // paso fijo de simulación
-const MAX_PASOS = 5;          // tope por frame: evita la espiral de la muerte
-let _semilla = 12345;
-
-function mulberry32(a){
-  return function(){
-    a |= 0; a = a + 0x6D2B79F5 | 0;
-    let t = Math.imul(a ^ a >>> 15, 1 | a);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
-let rng = mulberry32(_semilla);
-
-// Contadores para afinar el balance con datos, no con impresiones.
-const estad = { tiros:0, cabezazos:0, despejesPortero:0, goles:0, ticksConDueno:0 };
-function resetEstad(){ for(const k in estad) estad[k]=0; }
-function sembrar(n){ _semilla = n>>>0; rng = mulberry32(_semilla); return _semilla; }
-
-// Suavizado independiente del dt: k es la fracción que se aplicaría a 60 Hz.
-// El lerp(dt*k) de toda la vida NO es dt-correcto: la aceleración efectiva
-// cambia con los fotogramas por segundo.
-function suavizado(k, dt){ return 1 - Math.pow(1-k, dt*60); }
-
-// Hash del estado autoritativo. Cuantizado a milésimas para no acusar ruido
-// de coma flotante, pero sí cualquier divergencia real de simulación.
-function hashEstado(){
-  const q = v => Math.round(v*1000)/1000;
-  let s = q(ball.position.x)+','+q(ball.position.y)+','+q(ball.position.z)+'|'
-        + q(ball.userData.vel.x)+','+q(ball.userData.vel.y)+','+q(ball.userData.vel.z)+'|'
-        + q(ball.userData.kickLock)+'|';
-  for(let ti=0;ti<2;ti++) for(const p of teams[ti]){
-    s += q(p.pos.x)+','+q(p.pos.z)+','+q(p.vel.x)+','+q(p.vel.z)+','+q(p.facing)+','
-       + q(p.stamina)+','+q(p.stunTimer)+','+q(p.sliding)+','+(p.expelled?1:0)+';';
-  }
-  s += '|'+S.score[0]+'-'+S.score[1]+'|'+q(S.clock)+'|'+S.phase+'|'+S.possession
-     + '|'+cards[0].a+','+cards[0].r+','+cards[1].a+','+cards[1].r;
-  let h = 0x811c9dc5;                       // FNV-1a
-  for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h,0x01000193)>>>0; }
-  return h.toString(16).padStart(8,'0');
-}
-
 // sombra suave reutilizable (degradado radial) para jugadores y balón
 let _shadowTex=null;
 function softShadowTexture(){
@@ -1068,7 +1020,7 @@ function separarJugadores(minDist){
       const a=todos[i], b=todos[j];
       let dx=b.pos.x-a.pos.x, dz=b.pos.z-a.pos.z;
       let d=Math.hypot(dx,dz);
-      if(d<1e-4){ dx=rng()-0.5; dz=rng()-0.5; d=Math.hypot(dx,dz); }
+      if(d<1e-4){ dx=Math.random()-0.5; dz=Math.random()-0.5; d=Math.hypot(dx,dz); }
       if(d<minDist){
         const push=(minDist-d)/2/d;
         a.pos.x-=dx*push; a.pos.z-=dz*push;
@@ -1111,7 +1063,6 @@ function placeKickoff(kickTeam){
   if(punta[1]) punta[1].pos.set( 2.60, 0, -1.70*kd);   // receptor del primer pase
   separarJugadores(1.5);                                // sin jugadores encimados
   ball.position.set(0,BALL_R,0); ball.userData.vel.set(0,0,0);
-  ball.userData.kickLock=0;        // si no, el saque hereda el bloqueo de re-toque anterior
   camTarget.copy(ball.position); S.camSnap=true;   // cámara ya colocada en el saque
   S.possession = kickTeam;
   asignarPosicionesIniciales();
@@ -1289,13 +1240,13 @@ function positionForSetPiece(type, team, x, z, taker){
       // córner: ambos equipos cargan el área para el cabezazo
       const boxZ = z*0.90, side = Math.sign(x);
       const meto = (p.role==='DEF'&&ti===team) ? 0.45 : 1;   // algún defensa se queda
-      p.pos.set( (rng()-0.5)*24*meto - side*2,
+      p.pos.set( (Math.random()-0.5)*24*meto - side*2,
                  0,
-                 boxZ - Math.sign(z)*(4 + rng()*11) );
+                 boxZ - Math.sign(z)*(4 + Math.random()*11) );
     } else if(type==='penal'){
       // todos fuera del área salvo ejecutor y portero
       const outZ = z + (z>0? -18 : 18);
-      p.pos.set((rng()-0.5)*36, 0, outZ + (rng()-0.5)*10);
+      p.pos.set((Math.random()-0.5)*36, 0, outZ + (Math.random()-0.5)*10);
     } else {
       // banda / puerta / falta: formación normal, con el rival a distancia
       p.pos.copy(_v);
@@ -1324,10 +1275,10 @@ function takeSetPiece(){
   const gz = goalDirZ(sp.team);
   if(sp.type==='corner'){
     // centro alto al punto de penal para rematar de cabeza
-    const target=_v.set((rng()-0.5)*6, 0, gz - Math.sign(gz)*10);
+    const target=_v.set((Math.random()-0.5)*6, 0, gz - Math.sign(gz)*10);
     kickBall(t, target.sub(t.pos), 17, 7.5);
   } else if(sp.type==='puerta'){
-    const target=_v.set((rng()-0.5)*30, 0, sp.z + Math.sign(gz)*45);
+    const target=_v.set((Math.random()-0.5)*30, 0, sp.z + Math.sign(gz)*45);
     kickBall(t, target.sub(t.pos), 25, 6.5);
   } else if(sp.type==='penal'){
     doShoot(t, 1.0);
@@ -1353,7 +1304,7 @@ function commitFoul(offender, victim){
   const defTeam = offender.team;
   const penal = inPenaltyBox(victim.pos, defTeam);
   // severidad -> tarjeta
-  const sev = rng();
+  const sev = Math.random();
   let card='';
   if(sev>0.90){ card='roja'; cards[offender.team].r++; sendOff(offender); }
   else if(sev>0.62){ card='amarilla'; cards[offender.team].a++;
@@ -1430,7 +1381,7 @@ function tryPossession(dt){
     }
     owner.hasBall=true;
     // guardar el poseedor
-    S._owner = owner; estad.ticksConDueno++;
+    S._owner = owner;
     // ¿el receptor estaba en posición adelantada?
     if(offsidePend){
       if(owner===offsidePend){ callOffside(owner); return; }
@@ -1506,9 +1457,8 @@ function nearestOpponentDist(p){
 let passReceiver=null;
 
 function doShoot(p, power){
-  estad.tiros++;
   const gz = goalDirZ(p.team);
-  const aimX = (rng()-0.5)*GOAL_W*0.98;   // dispersión: aún pueden errar, pero menos
+  const aimX = (Math.random()-0.5)*GOAL_W*1.15;   // dispersión: pueden errar el arco
   const target=_v.set(aimX,1.0,gz);
   const dir=_v2.copy(target).sub(p.pos);
   const dist=dir.length();
@@ -1533,13 +1483,13 @@ function updateAI(dt){
       if(p.isGK){ goalkeeper(p, dt); continue; }
 
       // cabezazo en balones altos (centros y córners)
-      if(canHead(p) && rng()<0.30*60*DT){        // por segundo, no por frame
+      if(canHead(p) && Math.random()<0.30){
         header(p, Math.abs(goalDirZ(p.team)-p.pos.z) < 30);
         continue;
       }
       // entrada/barrida de la IA sobre el rival con balón
       if(targetsBall && S._owner && S._owner.team!==p.team && p.slideCd<=0
-         && distXZ(p.pos, S._owner.pos)<2.3 && rng()<0.02*diff.react*60*DT){
+         && distXZ(p.pos, S._owner.pos)<2.3 && Math.random()<0.02*diff.react){
         slideTackle(p);
         continue;
       }
@@ -1609,7 +1559,7 @@ function steer(p, desired, maxSpd, dt){
   desired.y=0;
   const len=desired.length();
   if(len>0.05){ desired.multiplyScalar(maxSpd/len); }
-  p.vel.lerp(desired, suavizado(0.1, dt));   // antes dt*6: no era dt-correcto
+  p.vel.lerp(desired, Math.min(1,dt*6));
   if(p.vel.length()>maxSpd) p.vel.setLength(maxSpd);
   p.pos.addScaledVector(p.vel, dt);
   clampToField(p.pos);
@@ -1624,14 +1574,14 @@ function aiWithBall(p, diff, dt){
   const distGoal=Math.abs(gz-p.pos.z);
   const pressure = nearestOpponentDist(p);
   // decisiones
-  if(distGoal<26 && Math.abs(p.pos.x)<22 && rng()<(0.010+diff.react*0.014)*60*DT){
-    doShoot(p, 0.6+rng()*0.4); return;
+  if(distGoal<20 && Math.abs(p.pos.x)<20 && Math.random()<0.006+diff.react*0.01){
+    doShoot(p, 0.6+Math.random()*0.4); return;
   }
-  if(pressure<2.6 && rng()<0.015*60*DT){
+  if(pressure<3.4 && Math.random()<0.05){
     doPass(p); return;
   }
   // conducir hacia portería con leve zigzag evitando al rival
-  const dir=_v.set((rng()-0.5)*0.2, 0, Math.sign(gz-p.pos.z));
+  const dir=_v.set((Math.random()-0.5)*0.2, 0, Math.sign(gz-p.pos.z));
   // sesgar hacia el centro del arco
   dir.x += (-p.pos.x*0.02);
   steer(p, dir, baseSpeed(p)*0.92*diff.ai, dt);   // dt real: antes iba fijo a 1/60
@@ -1648,11 +1598,10 @@ function goalkeeper(p, dt){
   if(distXZ(p.pos,ball.position)<15 && Math.abs(ball.position.z-gz)<22){
     _v.copy(bp).sub(p.pos); _v.y=0;
   }
-  steer(p, _v, 7.2, dt);
+  steer(p, _v, 8.0, dt);
   // atajar y despejar
   if(distXZ(p.pos,ball.position)<1.9 && ball.position.y<2.4){
-    estad.despejesPortero++;
-    const out=_v2.set((rng()-0.5)*22, 0, p.team===0?22:-22);
+    const out=_v2.set((Math.random()-0.5)*22, 0, p.team===0?22:-22);
     kickBall(p, out, 26, 4);
   }
 }
@@ -1683,7 +1632,7 @@ function updateHuman(dt, h){
   const accel = wantSprint? 7.0 : 8.5;
   if(moving){
     mv.normalize().multiplyScalar(spd);
-    p.vel.lerp(mv, suavizado(accel/60, dt));
+    p.vel.lerp(mv, Math.min(1,dt*accel));
   } else {
     p.vel.multiplyScalar(Math.pow(0.015,dt));
   }
@@ -1714,14 +1663,13 @@ function canHead(p){
   return b.y>1.1 && b.y<3.6 && distXZ(p.pos,b)<2.5 && p.stunTimer<=0;
 }
 function header(p, aPuerta){
-  estad.cabezazos++;
   const gz=goalDirZ(p.team);
   let dir;
   if(aPuerta){
-    dir=_v.set((rng()-0.5)*GOAL_W*0.8, 0, gz).sub(p.pos);
+    dir=_v.set((Math.random()-0.5)*GOAL_W*0.8, 0, gz).sub(p.pos);
     kickBall(p, dir, 19, 1.0);
   } else {
-    dir=_v.set((rng()-0.5)*16, 0, gz).sub(p.pos);
+    dir=_v.set((Math.random()-0.5)*16, 0, gz).sub(p.pos);
     kickBall(p, dir, 14, 3.0);
   }
   p.heading=0.35;   // animación
@@ -1859,12 +1807,11 @@ function updateCamera(dt){
 //  GOLES, RELOJ Y FASES
 // ---------------------------------------------------------------------------
 function scoreGoal(team){
-  estad.goles++;
   S.score[team]++; lastScorer=team;
   goalCooldown=3.2;
   S.phase='goal'; S.phaseT=0;
   updateScorebug();
-  const scorer = names[team][ (7+ (rng()*3|0)) ];
+  const scorer = names[team][ (7+ (Math.random()*3|0)) ];
   announce('¡GOOOL!', `${team===0?S.homeTeam.nombre:S.awayTeam.nombre} — ${scorer}`);
   burstConfetti(team);
   playWhistle(2); crowdCheer();
@@ -2126,48 +2073,34 @@ function drawMinimap(){
 // ---------------------------------------------------------------------------
 //  BUCLE PRINCIPAL
 // ---------------------------------------------------------------------------
-// UN TICK de simulación, siempre con el mismo dt. Todo lo que decide el
-// resultado del partido vive aquí dentro; el render va aparte, a la tasa
-// del monitor. Sin esto no hay servidor autoritativo posible.
-let simTick = 0;
-function stepSim(dt){
-  updatePhase(dt);
-  if(S.phase==='play'||S.phase==='kickoff'){
-    updateHumans(dt);
-    updateAI(dt);
-    enforceKickoffRule();
-    tryPossession(dt);
-    updateBall(dt);
-    recordReplay(dt);
-  } else if(S.phase==='setpiece'){
-    // cualquier humano del equipo que saca puede ejecutar antes con pase/tiro
-    if(S.setPiece){
-      const h=S.humans.find(x=>x.team===S.setPiece.team);
-      if(h && (h.input.pass||h.input.shoot)) takeSetPiece();
-    }
-  }
-  for(let ti=0;ti<2;ti++)for(const p of teams[ti]) p.update(dt);
-  if(goalCooldown>0) goalCooldown-=dt;
-  simTick++;
-}
-
-let acumulador = 0;
 function animate(){
   requestAnimationFrame(animate);
-  const frameDt=Math.min(clock.getDelta(), 0.25);
+  const dt=Math.min(clock.getDelta(), 0.05);
   if(S.running && !S.paused){
-    pollInput();                       // los dispositivos se muestrean una vez por frame
-    acumulador += frameDt;
-    let pasos=0;
-    while(acumulador >= DT && pasos < MAX_PASOS){ stepSim(DT); acumulador -= DT; pasos++; }
-    if(pasos === MAX_PASOS) acumulador = 0;   // se descarta el atraso en vez de acumularlo
-    // --- presentación: a la tasa del monitor, no del simulador ---
-    updateConfetti(frameDt);
-    updateCrowd(frameDt);
-    updateCamera(frameDt);
+    pollInput();
+    updatePhase(dt);
+    if(S.phase==='play'||S.phase==='kickoff'){
+      updateHumans(dt);
+      updateAI(dt);
+      enforceKickoffRule();
+      tryPossession(dt);
+      updateBall(dt);
+      recordReplay(dt);
+    } else if(S.phase==='setpiece'){
+      // cualquier humano del equipo que saca puede ejecutar antes con pase/tiro
+      if(S.setPiece){
+        const h=S.humans.find(x=>x.team===S.setPiece.team);
+        if(h && (h.input.pass||h.input.shoot)) takeSetPiece();
+      }
+    }
+    for(let ti=0;ti<2;ti++)for(const p of teams[ti]) p.update(dt);
+    updateConfetti(dt);
+    updateCrowd(dt);
+    updateCamera(dt);
     updateClock();
     updateStaminaUI();
     drawMinimap();
+    if(goalCooldown>0) goalCooldown-=dt;
   }
   // con calidad "media" se salta el post-procesado para ganar rendimiento
   if(S.quality==='alta' && composer) composer.render();
@@ -2466,100 +2399,11 @@ function boot(){
   buildConfetti();
   buildMenu();
   updatePadUI();
-  window.__dbg = {
-    // --- lectura ---
-    get cam(){return camera.position;}, get ball(){return ball.position;}, S, teams,
+  window.__dbg = { get cam(){return camera.position;}, get ball(){return ball.position;}, S, teams,
     get camera(){return camera;}, get scene(){return scene;},
     get camCalls(){return __camCalls;}, get camDist(){return __camLast;},
     get canvases(){return document.querySelectorAll('canvas').length;},
-    get tick(){return simTick;},
-    LIGA, simularJornada, clasificacion, mostrarTorneo,
-
-    // --- determinismo ---
-    seed: n => sembrar(n),
-    hash: () => hashEstado(),
-    rand: () => rng(),                       // sonda: comprueba el propio RNG
-    stepN(n){ for(let i=0;i<n;i++) stepSim(DT); return hashEstado(); },
-    resetGolden(semilla=12345){              // mismo reinicio que golden(), sin correr
-      S.humans=[]; sembrar(semilla);
-      teams.forEach(arr=>arr.forEach(pl=>scene.remove(pl.mesh)));
-      teams[0]=[]; teams[1]=[]; spawnTeams();
-      S.score=[0,0]; S.clock=0; S.half=1; lastScorer=null;
-      cards[0]={a:0,r:0}; cards[1]={a:0,r:0}; S.setPiece=null;
-      replay.frames.length=0; goalCooldown=0; acumulador=0;
-      lastTouch=-1; offsidePend=null; passReceiver=null;
-      S._owner=null; S.possession=0;
-      placeKickoff(0); S.phase='kickoff'; S.phaseT=0;
-      return hashEstado();
-    },
-
-    // --- comandos de forzado: convierten la prueba de humo en 90 s deterministas ---
-    teleportBall(x, y=BALL_R, z=0){
-      ball.position.set(x,y,z); ball.userData.vel.set(0,0,0); ball.userData.kickLock=0;
-      if(S._owner){ S._owner.hasBall=false; S._owner=null; }
-      return [x,y,z];
-    },
-    setClock(seg){ S.clock=seg; return S.clock; },
-    goal(team=0){ lastTouch=team; scoreGoal(team); return S.score.slice(); },
-    forceSetPiece(tipo='penal', team=0){
-      const gz = goalDirZ(team);              // portería que ataca ese equipo
-      const pos = {
-        penal:  [0, gz - Math.sign(gz)*11],
-        corner: [Math.sign(gz)*(HALF_W-0.4), gz],
-        banda:  [HALF_W, 0],
-        puerta: [0, -gz + Math.sign(gz)*5.5],
-        falta:  [ball.position.x, ball.position.z],
-      }[tipo];
-      if(!pos) return 'tipo inválido: penal|corner|banda|puerta|falta';
-      startSetPiece(tipo, team, pos[0], pos[1]);
-      return {tipo, team, pos};
-    },
-    card(tipo='amarilla', team=1, idx=5){
-      const p = teams[team][idx]; if(!p) return 'jugador inexistente';
-      if(tipo==='roja'){ cards[team].r++; sendOff(p); } else { cards[team].a++; p.yellow++; }
-      showCard(tipo); return {tipo, team, num:p.num, cards:cards.map(c=>({...c}))};
-    },
-    forceOffside(){
-      // adelanta a un punta por detrás del último defensa y le mete el pase
-      const atac = teams[0].filter(p=>!p.isGK).sort((a,b)=>b.formation.z-a.formation.z)[0];
-      const zs = teams[1].map(o=>o.pos.z).sort((a,b)=>b-a);
-      atac.pos.z = Math.max(zs[1] + 4, 6);
-      const pasador = teams[0].find(p=>p!==atac && !p.isGK);
-      ball.position.set(pasador.pos.x, BALL_R, pasador.pos.z);
-      offsidePend = atac; S._owner = pasador;
-      callOffside(atac);
-      return {adelantado:atac.num, z:+atac.pos.z.toFixed(1)};
-    },
-
-    // --- GOLDEN MASTER: N segundos de IA vs IA, semilla fija, hash por segundo ---
-    golden(segundos=90, semilla=12345){
-      const humanosAntes = S.humans;
-      S.humans = [];                                   // IA pura: sin entradas humanas
-      for(const arr of teams) for(const p of arr) p.humanOwner = null;
-      sembrar(semilla);
-      // Mundo COMPLETAMENTE limpio. Reutilizar los jugadores no sirve: arrastran
-      // energía gastada y temporizadores, y sendOff() los saca del array, así que
-      // tras una roja la siguiente corrida empezaría con menos jugadores.
-      teams.forEach(arr=>arr.forEach(pl=>scene.remove(pl.mesh)));
-      teams[0]=[]; teams[1]=[]; spawnTeams();
-      S.score=[0,0]; S.clock=0; S.half=1; lastScorer=null;
-      cards[0]={a:0,r:0}; cards[1]={a:0,r:0}; S.setPiece=null;
-      replay.frames.length=0; goalCooldown=0; acumulador=0;
-      lastTouch=-1; offsidePend=null; passReceiver=null;
-      S._owner=null; S.possession=0; resetEstad();
-      placeKickoff(0); S.phase='kickoff'; S.phaseT=0;
-      const hashes=[];
-      const total=Math.round(segundos/DT);
-      for(let i=0;i<total;i++){
-        stepSim(DT);
-        if((i+1) % 60 === 0) hashes.push(hashEstado());
-      }
-      const resumen={ semilla, segundos, ticks:total, marcador:S.score.slice(),
-                      estad:{...estad}, hashes, final:hashes[hashes.length-1] };
-      S.humans = humanosAntes;
-      return resumen;
-    },
-  };
+    LIGA, simularJornada, clasificacion, mostrarTorneo };
   animate();
   setTimeout(()=>document.getElementById('loader').style.display='none', 500);
 }

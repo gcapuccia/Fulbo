@@ -194,3 +194,57 @@ rama `main`, carpeta `/ (root)`.
 > **Nota sobre el mando:** la API de Gamepad requiere **HTTPS** (o `localhost`).
 > Tanto Vercel como GitHub Pages sirven por HTTPS, así que los joysticks
 > funcionan sin problema una vez desplegado.
+
+## 🧪 Desarrollo: determinismo y prueba de humo
+
+Desde la Fase 1 del refactor, la simulación corre a **paso fijo de 60 Hz** y todo
+el azar que afecta a las reglas pasa por un **RNG con semilla**. El azar
+cosmético (piel, pelo, césped, público, confeti) sigue siendo libre: esa
+separación es exactamente la frontera entre núcleo y render.
+
+### Consola de depuración (`__dbg`)
+
+Abre la consola del navegador durante un partido:
+
+```js
+__dbg.seed(12345)                  // fija la semilla
+__dbg.hash()                       // hash del estado autoritativo
+__dbg.golden(90, 12345)            // 90 s de IA vs IA, hash por segundo
+__dbg.tick                         // número de tick de simulación
+
+__dbg.forceSetPiece('penal', 0)    // penal|corner|banda|puerta|falta, equipo
+__dbg.card('roja', 1, 6)           // tipo, equipo, índice de jugador
+__dbg.forceOffside()
+__dbg.goal(0)                      // gol del equipo indicado
+__dbg.teleportBall(x, y, z)
+__dbg.setClock(85)                 // adelanta el reloj del partido
+```
+
+**El golden master es el oráculo del refactor:** `__dbg.golden(90, 12345)` debe
+devolver siempre los mismos 90 hashes. Si una fase del refactor los cambia sin
+que lo hayas decidido, es un bug — y sabés exactamente en qué commit.
+
+### Prueba de humo (12 puntos, ~90 segundos)
+
+Con los comandos de forzado, lo que antes exigía veinte minutos de jugar con
+suerte ahora se comprueba en minuto y medio:
+
+| # | Comprobación | Cómo |
+|---|---|---|
+| 1 | El menú carga y se eligen equipos | clic en la lista |
+| 2 | Dos personas, teclado 1 y 2, equipos distintos | selector *Jugadores: 2* |
+| 3 | Ambas mueven su jugador de forma independiente | `WASD` y flechas a la vez |
+| 4 | Gol, celebración y goleador | `__dbg.goal(0)` |
+| 5 | Repetición en cámara lenta y vuelta al saque | esperar tras el gol |
+| 6 | Córner: los dos equipos cargan el área | `__dbg.forceSetPiece('corner',0)` |
+| 7 | Saque de banda | `__dbg.forceSetPiece('banda',0)` |
+| 8 | Penal: área despejada y ejecutor colocado | `__dbg.forceSetPiece('penal',0)` |
+| 9 | Tarjeta roja: expulsión y equipo con 10 | `__dbg.card('roja',1,6)` |
+| 10 | Fuera de juego señalado | `__dbg.forceOffside()` |
+| 11 | Cambio de formación en caliente | tecla `F` |
+| 12 | Pausa y una jornada de torneo | `Esc` · botón 🏆 |
+
+### Comparación A/B
+
+`legacy/index-v0.html` es el monolito congelado **antes** del refactor. Ábrelo en
+otra pestaña para comparar sensación y aspecto tras cada fase. No se toca nunca.
