@@ -1496,7 +1496,7 @@ function updateAI(dt){
 
       if(S._owner===p){
         // tiene el balón: avanzar a portería / decidir
-        aiWithBall(p, diff);
+        aiWithBall(p, diff, dt);
         continue;
       }
 
@@ -1569,7 +1569,7 @@ function clampToField(pos){
   pos.z=Math.max(-HALF_L-4,Math.min(HALF_L+4,pos.z));
 }
 
-function aiWithBall(p, diff){
+function aiWithBall(p, diff, dt){
   const gz=goalDirZ(p.team);
   const distGoal=Math.abs(gz-p.pos.z);
   const pressure = nearestOpponentDist(p);
@@ -1584,7 +1584,7 @@ function aiWithBall(p, diff){
   const dir=_v.set((Math.random()-0.5)*0.2, 0, Math.sign(gz-p.pos.z));
   // sesgar hacia el centro del arco
   dir.x += (-p.pos.x*0.02);
-  steer(p, dir, baseSpeed(p)*0.92*diff.ai, 1/60);
+  steer(p, dir, baseSpeed(p)*0.92*diff.ai, dt);   // dt real: antes iba fijo a 1/60
 }
 
 function goalkeeper(p, dt){
@@ -1861,20 +1861,24 @@ function updateStaminaUI(){
   }
 }
 
+// ¿este equipo lo lleva alguna persona? (antes se asumía que el humano era siempre
+// el equipo 0, lo que rompía los saques del Jugador 2 al jugar en el equipo visitante)
+function equipoTieneHumano(t){ return S.humans.some(h => h.team===t); }
+
 function updatePhase(dt){
   S.phaseT+=dt;
   if(S.phase==='kickoff'){
     // si saca la IA, pone el balón en juego sola
-    if(S.kickTeam!==0 && S.phaseT>1.1 && !S.kickoffTaken){
+    if(!equipoTieneHumano(S.kickTeam) && S.phaseT>1.1 && !S.kickoffTaken){
       const t=teams[S.kickTeam].find(p=>!p.isGK && distXZ(p.pos,ball.position)<3.5);
       if(t) doPass(t); else { S.kickoffTaken=true; S.phase='play'; S.phaseT=0; }
     }
-    // si saca el humano, el juego espera a su primer pase (con tope de seguridad)
-    if(S.kickTeam===0 && S.phaseT>20){ S.kickoffTaken=true; S.phase='play'; S.phaseT=0; }
+    // si saca una persona, el juego espera a su primer pase (con tope de seguridad)
+    if(equipoTieneHumano(S.kickTeam) && S.phaseT>20){ S.kickoffTaken=true; S.phase='play'; S.phaseT=0; }
   } else if(S.phase==='setpiece'){
     const sp=S.setPiece;
     // el humano dispone de unos segundos para ejecutar; la IA saca sola
-    const auto = (sp && sp.team===0) ? 4.5 : 1.3;
+    const auto = (sp && equipoTieneHumano(sp.team)) ? 4.5 : 1.3;
     if(S.phaseT>auto) takeSetPiece();
   } else if(S.phase==='goal'){
     if(S.phaseT>2.6) startReplay();          // celebración -> repetición
@@ -2359,6 +2363,7 @@ function startMatch(){
   spawnTeams();
   S.score=[0,0]; S.clock=0; S.half=1; lastScorer=null;
   cards[0]={a:0,r:0}; cards[1]={a:0,r:0}; S.setPiece=null;
+  replay.frames.length=0;   // el buffer guarda referencias a los Player del partido anterior
   if(!S.humans.length) crearHumanos(S.numHumanos);
   S.humans.forEach(h=>h.controlled=null);
   setupHUDTeams(); updateCardsUI(); buildStaminaUI();
