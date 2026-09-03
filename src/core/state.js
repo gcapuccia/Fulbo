@@ -7,6 +7,8 @@
 // En la Fase 4 esto se convierte en createWorld(): una instancia por partido,
 // que es lo que permite que un servidor tenga varias salas a la vez.
 import { TEAMS } from '../config/teams.js';
+import { BALL_R } from '../config/field.js';
+import { Vec3 } from './math.js';
 
 export const S = {
   quality:'alta', difficulty:'normal', halfLen:120, // segundos por tiempo
@@ -30,3 +32,9 @@ export const cards = [{a:0,r:0},{a:0,r:0}];   // amarillas/rojas por equipo
 // Contadores para afinar el balance con datos, no con impresiones.
 export const estad = { tiros:0, cabezazos:0, despejesPortero:0, goles:0, ticksConDueno:0 };
 export function resetEstad(){ for(const k in estad) estad[k]=0; }
+
+// El balón, como DATOS. Antes su posición autoritativa era la de un THREE.Mesh,
+// lo que hacía imposible simular un partido en Node. Ahora la malla es sólo
+// una vista que sigue a este objeto.
+export const bola = { pos:new Vec3(0,BALL_R,0), vel:new Vec3(), spin:new Vec3(),
+                      r:BALL_R, kickLock:0 };

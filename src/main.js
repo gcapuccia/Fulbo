@@ -16,7 +16,7 @@ import { DT, MAX_PASOS, DIFF, SPRINT_MUL, TOQUE_MAX, CAPTURA, SP_LABEL,
 // --- Núcleo ---
 import { Vec3 }                               from './core/math.js';
 import { G }                                  from './app/G.js';
-import { S, teams, names, cards, estad, resetEstad } from './core/state.js';
+import { S, teams, names, cards, estad, resetEstad, bola } from './core/state.js';
 import { badgeCSS }                           from './ui/badge.js';
 import { LIGA, crearLiga, registrar, simularJornada, clasificacion, partidoUsuario,
          mostrarTorneo }                      from './league/league.js';
@@ -67,9 +67,9 @@ import { buildStadium }                       from './render/scene/stadium.js';
 // de coma flotante, pero sí cualquier divergencia real de simulación.
 function hashEstado(){
   const q = v => Math.round(v*1000)/1000;
-  let s = q(G.ball.position.x)+','+q(G.ball.position.y)+','+q(G.ball.position.z)+'|'
-        + q(G.ball.userData.vel.x)+','+q(G.ball.userData.vel.y)+','+q(G.ball.userData.vel.z)+'|'
-        + q(G.ball.userData.kickLock)+'|';
+  let s = q(bola.pos.x)+','+q(bola.pos.y)+','+q(bola.pos.z)+'|'
+        + q(bola.vel.x)+','+q(bola.vel.y)+','+q(bola.vel.z)+'|'
+        + q(bola.kickLock)+'|';
   for(let ti=0;ti<2;ti++) for(const p of teams[ti]){
     s += q(p.pos.x)+','+q(p.pos.z)+','+q(p.vel.x)+','+q(p.vel.z)+','+q(p.facing)+','
        + q(p.stamina)+','+q(p.stunTimer)+','+q(p.sliding)+','+(p.expelled?1:0)+';';
@@ -168,8 +168,8 @@ function buildBall(){
   const mat = new THREE.MeshStandardMaterial({map:tex, roughness:0.42, metalness:0.02});
   G.ball = new THREE.Mesh(geo, mat);
   G.ball.castShadow = true;
-  G.ball.position.set(0,BALL_R,0);
-  G.ball.userData = { vel:new Vec3(), spin:new Vec3(), r:BALL_R };
+  bola.pos.set(0,BALL_R,0);
+  G.ball.userData = {};   // el estado vive en bola (core/state.js)
   G.scene.add(G.ball);
   // sombra "blob" extra bajo el balón
   const sh = new THREE.Mesh(new THREE.PlaneGeometry(0.55,0.55),
@@ -466,9 +466,9 @@ function placeKickoff(kickTeam){
   if(punta[0]) punta[0].pos.set(-0.75, 0, -0.85*kd);   // ejecutor
   if(punta[1]) punta[1].pos.set( 2.60, 0, -1.70*kd);   // receptor del primer pase
   separarJugadores(1.5);                                // sin jugadores encimados
-  G.ball.position.set(0,BALL_R,0); G.ball.userData.vel.set(0,0,0);
-  G.ball.userData.kickLock=0;        // si no, el saque hereda el bloqueo de re-toque anterior
-  camTarget.copy(G.ball.position); S.camSnap=true;   // cámara ya colocada en el saque
+  bola.pos.set(0,BALL_R,0); bola.vel.set(0,0,0);
+  bola.kickLock=0;        // si no, el saque hereda el bloqueo de re-toque anterior
+  camTarget.copy(bola.pos); S.camSnap=true;   // cámara ya colocada en el saque
   S.possession = kickTeam;
   asignarPosicionesIniciales();
 }
@@ -483,7 +483,7 @@ const _v = new Vec3(), _v2 = new Vec3();
 function nearestToBall(ti){
   let best=null, bd=1e9;
   teams[ti].forEach(p=>{ if(p.isGK) return;
-    const d=p.pos.distanceToSquared(G.ball.position); if(d<bd){bd=d;best=p;} });
+    const d=p.pos.distanceToSquared(bola.pos); if(d<bd){bd=d;best=p;} });
   return best;
 }
 // ---------------------------------------------------------------------------
@@ -510,7 +510,7 @@ function masCercanoLibre(team, h){
   for(const p of teams[team]){
     if(p.isGK) continue;
     if(p.humanOwner && p.humanOwner!==h) continue;
-    const d=p.pos.distanceToSquared(G.ball.position);
+    const d=p.pos.distanceToSquared(bola.pos);
     if(d<bd){bd=d;best=p;}
   }
   return best;
@@ -545,13 +545,13 @@ function goalDirZ(ti){ return ti===0? HALF_L : -HALF_L; } // z de la portería r
 //  ACTUALIZACIÓN DE BALÓN
 // ---------------------------------------------------------------------------
 function updateBall(dt){
-  const b=G.ball, u=b.userData;
+  const b=bola, u=bola;
   if(u.kickLock>0) u.kickLock-=dt;
   u.vel.y -= 22*dt; // gravedad
-  b.position.addScaledVector(u.vel, dt);
+  b.pos.addScaledVector(u.vel, dt);
   // rozamiento suelo
-  if(b.position.y<=u.r+0.001){
-    b.position.y=u.r;
+  if(b.pos.y<=u.r+0.001){
+    b.pos.y=u.r;
     if(u.vel.y<0) u.vel.y = -u.vel.y*0.45; // rebote
     u.vel.x*=Math.pow(0.12,dt); u.vel.z*=Math.pow(0.12,dt); // fricción césped
     if(Math.abs(u.vel.y)<0.6) u.vel.y=0;
@@ -562,34 +562,41 @@ function updateBall(dt){
   handleGoalCheck();
   // --- BALÓN FUERA: saque de banda / córner / saque de puerta ---
   if(S.phase==='play'){
-    if(Math.abs(b.position.x) > HALF_W){
+    if(Math.abs(b.pos.x) > HALF_W){
       // fuera por la banda -> saque de banda del equipo contrario al último que tocó
       const eq = G.lastTouch===0?1:0;
-      startSetPiece('banda', eq, Math.sign(b.position.x)*HALF_W, b.position.z);
-    } else if(Math.abs(b.position.z) > HALF_L){
-      const fondo = Math.sign(b.position.z);          // +1 = arco del visitante
+      startSetPiece('banda', eq, Math.sign(b.pos.x)*HALF_W, b.pos.z);
+    } else if(Math.abs(b.pos.z) > HALF_L){
+      const fondo = Math.sign(b.pos.z);          // +1 = arco del visitante
       const defensor = fondo>0 ? 1 : 0;               // equipo que defiende ese fondo
       if(G.lastTouch===defensor){
         // la sacó el defensor -> CÓRNER para el atacante
-        startSetPiece('corner', 1-defensor, Math.sign(b.position.x||1)*(HALF_W-0.4), fondo*(HALF_L-0.4));
+        startSetPiece('corner', 1-defensor, Math.sign(b.pos.x||1)*(HALF_W-0.4), fondo*(HALF_L-0.4));
       } else {
         // la sacó el atacante -> SAQUE DE PUERTA del defensor
         startSetPiece('puerta', defensor, 0, fondo*(HALF_L-5.5));
       }
     }
   }
-  // rotación visual
-  const sp=_v.copy(u.vel); sp.y=0;
-  b.rotation.x += u.vel.z*dt*0.9; b.rotation.z -= u.vel.x*dt*0.9;
-  // sombra
-  u.blob.position.set(b.position.x, 0.02, b.position.z);
-  const h=Math.max(0,b.position.y-u.r);
-  u.blob.scale.setScalar(1+ h*0.25); u.blob.material.opacity=Math.max(0.05,0.3- h*0.03);
+}
+
+// La malla del balón sigue al estado. Es VISTA: rotación, sombra proyectada
+// y opacidad según la altura. El núcleo no sabe que existe.
+function syncBallView(dt){
+  const m=G.ball; if(!m) return;
+  m.position.set(bola.pos.x, bola.pos.y, bola.pos.z);
+  m.rotation.x += bola.vel.z*dt*0.9;
+  m.rotation.z -= bola.vel.x*dt*0.9;
+  const blob=m.userData.blob;
+  blob.position.set(bola.pos.x, 0.02, bola.pos.z);
+  const h=Math.max(0, bola.pos.y-bola.r);
+  blob.scale.setScalar(1+h*0.25);
+  blob.material.opacity=Math.max(0.05, 0.3-h*0.03);
 }
 
 function handleGoalCheck(){
   if(S.phase!=='play' || G.goalCooldown>0) return;
-  const b=G.ball.position;
+  const b=bola.pos;
   if(Math.abs(b.x)<GOAL_W/2 && b.y<GOAL_H){
     if(b.z> HALF_L-0.1){ scoreGoal(0); }       // gol de local en portería +z
     else if(b.z< -HALF_L+0.1){ scoreGoal(1); } // gol de visita en portería -z
@@ -603,8 +610,8 @@ function teamName(t){ return t===0?S.homeTeam.nombre:S.awayTeam.nombre; }
 
 function startSetPiece(type, team, x, z){
   S.phase='setpiece'; S.phaseT=0;
-  G.ball.userData.vel.set(0,0,0); G.ball.userData.kickLock=0;
-  G.ball.position.set(x, BALL_R, z);
+  bola.vel.set(0,0,0); bola.kickLock=0;
+  bola.pos.set(x, BALL_R, z);
   if(S._owner){ S._owner.hasBall=false; S._owner=null; }
   // ejecutor: el portero en saque de puerta y penal-atajador aparte; si no, el más cercano
   let taker;
@@ -612,7 +619,7 @@ function startSetPiece(type, team, x, z){
   else {
     taker=null; let bd=1e9;
     for(const p of teams[team]){ if(p.isGK) continue;
-      const d=distXZ(p.pos, G.ball.position); if(d<bd){bd=d;taker=p;} }
+      const d=distXZ(p.pos, bola.pos); if(d<bd){bd=d;taker=p;} }
   }
   S.setPiece = { type, team, taker, x, z, taken:false };
   positionForSetPiece(type, team, x, z, taker);
@@ -647,10 +654,10 @@ function positionForSetPiece(type, team, x, z, taker){
     } else {
       // banda / puerta / falta: formación normal, con el rival a distancia
       p.pos.copy(_v);
-      if(ti===rival && distXZ(p.pos, G.ball.position)<9){
-        const away=_v2.copy(p.pos).sub(G.ball.position); away.y=0;
+      if(ti===rival && distXZ(p.pos, bola.pos)<9){
+        const away=_v2.copy(p.pos).sub(bola.pos); away.y=0;
         if(away.lengthSq()<0.01) away.set(1,0,0);
-        away.setLength(9.5); p.pos.copy(G.ball.position).add(away); p.pos.y=0;
+        away.setLength(9.5); p.pos.copy(bola.pos).add(away); p.pos.y=0;
       }
     }
     clampToField(p.pos);
@@ -748,13 +755,13 @@ function tryPossession(dt){
   // ¿quién toca el balón?
   let owner=null, od=1e9;
   for(let ti=0;ti<2;ti++)for(const p of teams[ti]){
-    const d=distXZ(p.pos, G.ball.position);
+    const d=distXZ(p.pos, bola.pos);
     if(d<od){od=d; owner=p;}
   }
-  const b=G.ball.userData;
+  const b=bola;
   // El radio de captura debe ser MAYOR que el toque de conducción; si no, el balón
   // se sale del radio, se pierde la posesión y sale disparado como una patada.
-  if(owner && od<CAPTURA && G.ball.position.y<1.4 && owner.stunTimer<=0 && b.kickLock<=0){
+  if(owner && od<CAPTURA && bola.pos.y<1.4 && owner.stunTimer<=0 && b.kickLock<=0){
     S.possession = owner.team;
     G.lastTouch = owner.team;
     // REGATE: el toque se alarga con la velocidad. Al trotar el balón va pegado al pie;
@@ -768,8 +775,8 @@ function tryPossession(dt){
     const adher = (owner.humanOwner?12:8) * (owner.sprinting?0.6:1.0);
     const relV = b.vel.length();
     if(relV<22){
-      G.ball.position.lerp(target, Math.min(1, dt*adher));
-      G.ball.position.y = Math.max(G.ball.position.y, BALL_R);
+      bola.pos.lerp(target, Math.min(1, dt*adher));
+      bola.pos.y = Math.max(bola.pos.y, BALL_R);
       // el balón ACOMPAÑA al jugador; nada de fuerzas de muelle acumuladas
       b.vel.set(owner.vel.x, Math.min(b.vel.y,0), owner.vel.z);
     }
@@ -788,11 +795,11 @@ function tryPossession(dt){
 }
 
 function kickBall(from, dirVec, power, lift){
-  const u=G.ball.userData;
+  const u=bola;
   const d=_v.copy(dirVec); d.y=0; if(d.lengthSq()<1e-4) d.set(Math.sin(from.facing),0,Math.cos(from.facing));
   d.normalize();
   u.vel.set(d.x*power, lift, d.z*power);
-  G.ball.position.y=Math.max(G.ball.position.y,0.36);
+  bola.pos.y=Math.max(bola.pos.y,0.36);
   G.lastTouch = from.team;
   u.kickLock = 0.3;              // evita que el mismo pie re-capture el balón
   if(S._owner){ S._owner.hasBall=false; S._owner=null; }
@@ -831,7 +838,7 @@ function isOffside(receptor, pasador){
   const ti = receptor.team, dir = ti===0? 1 : -1;
   const rz = receptor.pos.z*dir;
   if(rz <= 0) return false;                              // en su propio campo, nunca
-  if(rz <= G.ball.position.z*dir) return false;            // no está por delante del balón
+  if(rz <= bola.pos.z*dir) return false;            // no está por delante del balón
   const zs = teams[1-ti].map(o=>o.pos.z*dir).sort((a,b)=>b-a);
   const penultimo = zs.length>1 ? zs[1] : -1e9;          // portero + último defensa
   return rz > penultimo + 0.5;
@@ -898,13 +905,13 @@ function updateAI(dt){
       else            p.stamina = Math.min(1, p.stamina + dt*0.06);
 
       if(targetsBall){
-        desired.copy(G.ball.position).sub(p.pos);
+        desired.copy(bola.pos).sub(p.pos);
       } else {
         // volver a posición de formación desplazada por el balón
         homePos(ti, p.formation, _v2);
-        const ballBias = G.ball.position.z * 0.18;
+        const ballBias = bola.pos.z * 0.18;
         _v2.z += ballBias;
-        _v2.x = _v2.x*0.7 + G.ball.position.x*0.25;
+        _v2.x = _v2.x*0.7 + bola.pos.x*0.25;
         desired.copy(_v2).sub(p.pos);
       }
       const maxSpd = baseSpeed(p) * (targetsBall?diff.ai:0.9);
@@ -932,7 +939,7 @@ function shouldChase(p){
   // controlado, el 2º más cercano de la IA sale a presionar también.
   const mine = teams[p.team];
   let c1=null,d1=1e9,c2=null,d2=1e9;
-  for(const m of mine){ if(m.isGK) continue; const d=distXZ(m.pos,G.ball.position);
+  for(const m of mine){ if(m.isGK) continue; const d=distXZ(m.pos,bola.pos);
     if(d<d1){ d2=d1;c2=c1; d1=d;c1=m; } else if(d<d2){ d2=d;c2=m; } }
   // si al más cercano lo lleva una persona, presiona el segundo (la IA no se queda quieta)
   if(c1 && c1.humanOwner) return p===c2;
@@ -982,17 +989,17 @@ function aiWithBall(p, diff, dt){
 function goalkeeper(p, dt){
   const gz = p.team===0? -HALF_L : HALF_L; // su propia portería
   // posición predicha del balón (anticipación de la atajada)
-  const bp = _v2.copy(G.ball.position).addScaledVector(G.ball.userData.vel, 0.22);
+  const bp = _v2.copy(bola.pos).addScaledVector(bola.vel, 0.22);
   const targetX = Math.max(-GOAL_W/2-1.2, Math.min(GOAL_W/2+1.2, bp.x*0.9));
   const line = gz + (p.team===0? 2.2 : -2.2);
   _v.set(targetX,0,line).sub(p.pos);
   // si el balón se acerca a su zona, sale a achicar hacia el punto predicho
-  if(distXZ(p.pos,G.ball.position)<15 && Math.abs(G.ball.position.z-gz)<22){
+  if(distXZ(p.pos,bola.pos)<15 && Math.abs(bola.pos.z-gz)<22){
     _v.copy(bp).sub(p.pos); _v.y=0;
   }
   steer(p, _v, 7.2, dt);
   // atajar y despejar
-  if(distXZ(p.pos,G.ball.position)<1.9 && G.ball.position.y<2.4){
+  if(distXZ(p.pos,bola.pos)<1.9 && bola.pos.y<2.4){
     estad.despejesPortero++;
     const out=_v2.set((rng()-0.5)*22, 0, p.team===0?22:-22);
     kickBall(p, out, 26, 4);
@@ -1052,7 +1059,7 @@ function updateHuman(dt, h){
 
 // --- CABEZAZO: sólo si el balón viene alto y cerca ---
 function canHead(p){
-  const b=G.ball.position;
+  const b=bola.pos;
   return b.y>1.1 && b.y<3.6 && distXZ(p.pos,b)<2.5 && p.stunTimer<=0;
 }
 function header(p, aPuerta){
@@ -1076,13 +1083,13 @@ function slideTackle(p){
   p.slideCd=1.3; p.sliding=0.55;
   const dir=new Vec3(Math.sin(p.facing),0,Math.cos(p.facing));
   p.vel.copy(dir).multiplyScalar(baseSpeed(p)*1.55);
-  const db=distXZ(p.pos, G.ball.position);
+  const db=distXZ(p.pos, bola.pos);
   const victim = (S._owner && S._owner.team!==p.team) ? S._owner : null;
   const dv = victim? distXZ(p.pos, victim.pos) : 99;
   if(db<2.7 && db<=dv+0.35){
     // llega primero al balón: entrada legal
-    G.ball.userData.vel.set(dir.x*11, 1.3, dir.z*11);
-    G.ball.userData.kickLock=0.28; G.lastTouch=p.team;
+    bola.vel.set(dir.x*11, 1.3, dir.z*11);
+    bola.kickLock=0.28; G.lastTouch=p.team;
     if(S._owner){ S._owner.hasBall=false; S._owner=null; }
     S.possession=p.team; playKick();
   } else if(victim && dv<2.5){
@@ -1099,7 +1106,7 @@ function recordReplay(dt){
   replay.acc += dt;
   if(replay.acc < 1/REPLAY_HZ) return;
   replay.acc = 0;
-  const f = { b:[G.ball.position.x, G.ball.position.y, G.ball.position.z], l:[] };
+  const f = { b:[bola.pos.x, bola.pos.y, bola.pos.z], l:[] };
   for(const arr of teams) for(const pl of arr) f.l.push({pl, x:pl.pos.x, z:pl.pos.z, fa:pl.facing});
   replay.frames.push(f);
   if(replay.frames.length > replay.max) replay.frames.shift();
@@ -1116,8 +1123,8 @@ function playReplay(dt){
   const i = Math.floor(replay.t);
   if(i >= fr.length-1) return false;
   const f=fr[i], g=fr[i+1], a=replay.t-i;      // interpolación entre fotogramas
-  G.ball.position.set(f.b[0]+(g.b[0]-f.b[0])*a, f.b[1]+(g.b[1]-f.b[1])*a, f.b[2]+(g.b[2]-f.b[2])*a);
-  G.ball.userData.blob.position.set(G.ball.position.x,0.02,G.ball.position.z);
+  bola.pos.set(f.b[0]+(g.b[0]-f.b[0])*a, f.b[1]+(g.b[1]-f.b[1])*a, f.b[2]+(g.b[2]-f.b[2])*a);
+  G.ball.userData.blob.position.set(bola.pos.x,0.02,bola.pos.z);
   const dtE = Math.max(dt,1e-4);
   for(let k=0;k<f.l.length;k++){
     const e=f.l[k], e2=g.l[k]; if(!e||!e2||e.pl!==e2.pl) continue;
@@ -1141,7 +1148,7 @@ function replayCamera(dt){
   const ang = -0.5 + t*0.30;
   G.camera.position.lerp(_vc.set(Math.sin(ang)*22, 4.5+t*0.8, gz + s*(14 - t*1.2)), Math.min(1,dt*3));
   if(Math.abs(G.camera.fov-34)>0.02){ G.camera.fov=34; G.camera.updateProjectionMatrix(); }
-  G.camera.lookAt(G.ball.position.x*0.7, 1.3, G.ball.position.z*0.95);
+  G.camera.lookAt(bola.pos.x*0.7, 1.3, bola.pos.z*0.95);
 }
 
 // ---------------------------------------------------------------------------
@@ -1171,7 +1178,7 @@ const AIM_X = (()=>{
 function updateCamera(dt){
   G.camCalls++;
   if(S.phase==='replay'){ replayCamera(dt); return; }   // cámara cinematográfica
-  camTarget.lerp(G.ball.position, Math.min(1,dt*2.6));
+  camTarget.lerp(bola.pos, Math.min(1,dt*2.6));
   // encuadre más cerrado en saques y jugadas paradas (dramatismo)
   const objetivo = (S.phase==='kickoff'||S.phase==='setpiece') ? 50 : VIEW_LEN;
   if(S.camSnap) G.curView = objetivo;
@@ -1264,7 +1271,7 @@ function updatePhase(dt){
   if(S.phase==='kickoff'){
     // si saca la IA, pone el balón en juego sola
     if(!equipoTieneHumano(S.kickTeam) && S.phaseT>1.1 && !S.kickoffTaken){
-      const t=teams[S.kickTeam].find(p=>!p.isGK && distXZ(p.pos,G.ball.position)<3.5);
+      const t=teams[S.kickTeam].find(p=>!p.isGK && distXZ(p.pos,bola.pos)<3.5);
       if(t) doPass(t); else { S.kickoffTaken=true; S.phase='play'; S.phaseT=0; }
     }
     // si saca una persona, el juego espera a su primer pase (con tope de seguridad)
@@ -1344,7 +1351,7 @@ function drawMinimap(){
     mmx.fillStyle= ti===0?S.homeTeam.c1:S.awayTeam.c1;
     for(const p of teams[ti]){ mmx.beginPath(); mmx.arc(toX(p.pos.z),toY(p.pos.x),2.4,0,7); mmx.fill(); }
   }
-  mmx.fillStyle='#fff'; mmx.beginPath(); mmx.arc(toX(G.ball.position.z),toY(G.ball.position.x),2,0,7); mmx.fill();
+  mmx.fillStyle='#fff'; mmx.beginPath(); mmx.arc(toX(bola.pos.z),toY(bola.pos.x),2,0,7); mmx.fill();
 }
 
 // ---------------------------------------------------------------------------
@@ -1384,6 +1391,7 @@ function animate(){
     while(G.acumulador >= DT && pasos < MAX_PASOS){ stepSim(DT); G.acumulador -= DT; pasos++; }
     if(pasos === MAX_PASOS) G.acumulador = 0;   // se descarta el atraso en vez de acumularlo
     // --- presentación: a la tasa del monitor, no del simulador ---
+    syncBallView(frameDt);
     updateConfetti(frameDt);
     updateCrowd(frameDt);
     updateCamera(frameDt);
@@ -1600,7 +1608,7 @@ function boot(){
   updatePadUI();
   window.__dbg = {
     // --- lectura ---
-    get cam(){return G.camera.position;}, get ball(){return G.ball.position;}, S, teams,
+    get cam(){return G.camera.position;}, get ball(){return bola.pos;}, S, teams,
     get camera(){return G.camera;}, get scene(){return G.scene;},
     get camCalls(){return G.camCalls;}, get camDist(){return G.camLast;},
     get canvases(){return document.querySelectorAll('canvas').length;},
@@ -1628,7 +1636,7 @@ function boot(){
 
     // --- comandos de forzado: convierten la prueba de humo en 90 s deterministas ---
     teleportBall(x, y=BALL_R, z=0){
-      G.ball.position.set(x,y,z); G.ball.userData.vel.set(0,0,0); G.ball.userData.kickLock=0;
+      bola.pos.set(x,y,z); bola.vel.set(0,0,0); bola.kickLock=0;
       if(S._owner){ S._owner.hasBall=false; S._owner=null; }
       return [x,y,z];
     },
@@ -1641,7 +1649,7 @@ function boot(){
         corner: [Math.sign(gz)*(HALF_W-0.4), gz],
         banda:  [HALF_W, 0],
         puerta: [0, -gz + Math.sign(gz)*5.5],
-        falta:  [G.ball.position.x, G.ball.position.z],
+        falta:  [bola.pos.x, bola.pos.z],
       }[tipo];
       if(!pos) return 'tipo inválido: penal|corner|banda|puerta|falta';
       startSetPiece(tipo, team, pos[0], pos[1]);
@@ -1658,7 +1666,7 @@ function boot(){
       const zs = teams[1].map(o=>o.pos.z).sort((a,b)=>b-a);
       atac.pos.z = Math.max(zs[1] + 4, 6);
       const pasador = teams[0].find(p=>p!==atac && !p.isGK);
-      G.ball.position.set(pasador.pos.x, BALL_R, pasador.pos.z);
+      bola.pos.set(pasador.pos.x, BALL_R, pasador.pos.z);
       G.offsidePend = atac; S._owner = pasador;
       callOffside(atac);
       return {adelantado:atac.num, z:+atac.pos.z.toFixed(1)};
