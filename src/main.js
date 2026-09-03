@@ -14,6 +14,13 @@ import { DT, MAX_PASOS, DIFF, SPRINT_MUL, TOQUE_MAX, CAPTURA, SP_LABEL,
          REPLAY_SEC, REPLAY_HZ, REPLAY_SPEED, COLORES_HUMANO, DISPOSITIVOS }
                                               from './config/rules.js';
 // --- Núcleo ---
+import { G }                                  from './app/G.js';
+import { S, teams, names, cards, estad, resetEstad } from './core/state.js';
+import { badgeCSS }                           from './ui/badge.js';
+import { LIGA, crearLiga, registrar, simularJornada, clasificacion, partidoUsuario,
+         mostrarTorneo }                      from './league/league.js';
+import { buildConfetti, burstConfetti, updateConfetti, buildFlashes, updateCrowd }
+                                              from './render/effects.js';
 import { rng, sembrar, suavizado }            from './core/rng.js';
 // --- Audio ---
 import { initAudio, playKick, playWhistle, crowdCheer, ensureAudio } from './audio/audio.js';
@@ -50,8 +57,6 @@ import { buildStadium }                       from './render/scene/stadium.js';
 
 
 // Contadores para afinar el balance con datos, no con impresiones.
-const estad = { tiros:0, cabezazos:0, despejesPortero:0, goles:0, ticksConDueno:0 };
-function resetEstad(){ for(const k in estad) estad[k]=0; }
 
 // Suavizado independiente del dt: k es la fracción que se aplicaría a 60 Hz.
 // El lerp(dt*k) de toda la vida NO es dt-correcto: la aceleración efectiva
@@ -61,9 +66,9 @@ function resetEstad(){ for(const k in estad) estad[k]=0; }
 // de coma flotante, pero sí cualquier divergencia real de simulación.
 function hashEstado(){
   const q = v => Math.round(v*1000)/1000;
-  let s = q(ball.position.x)+','+q(ball.position.y)+','+q(ball.position.z)+'|'
-        + q(ball.userData.vel.x)+','+q(ball.userData.vel.y)+','+q(ball.userData.vel.z)+'|'
-        + q(ball.userData.kickLock)+'|';
+  let s = q(G.ball.position.x)+','+q(G.ball.position.y)+','+q(G.ball.position.z)+'|'
+        + q(G.ball.userData.vel.x)+','+q(G.ball.userData.vel.y)+','+q(G.ball.userData.vel.z)+'|'
+        + q(G.ball.userData.kickLock)+'|';
   for(let ti=0;ti<2;ti++) for(const p of teams[ti]){
     s += q(p.pos.x)+','+q(p.pos.z)+','+q(p.vel.x)+','+q(p.vel.z)+','+q(p.facing)+','
        + q(p.stamina)+','+q(p.stunTimer)+','+q(p.sliding)+','+(p.expelled?1:0)+';';
@@ -80,63 +85,49 @@ function hashEstado(){
 // ---------------------------------------------------------------------------
 //  ESTADO GLOBAL
 // ---------------------------------------------------------------------------
-const S = {
-  quality:'alta', difficulty:'normal', halfLen:120, // segundos por tiempo
-  formation:['4-3-3','4-4-2'],   // [tu equipo, rival]
-  kickTeam:0, kickoffTaken:true,
-  numHumanos:1, humans:[],
-  homeTeam:TEAMS[0], awayTeam:TEAMS[4],
-  running:false, paused:false,
-  score:[0,0], clock:0, half:1,
-  phase:'menu',  // menu | kickoff | play | goal | half | full
-  phaseT:0,
-  possession:0,  // equipo con el balón (0 local / 1 visita) o -1
-  controlled:null,
-};
 
 // ---------------------------------------------------------------------------
 //  THREE — Renderer, escena, cámara
 // ---------------------------------------------------------------------------
-let renderer, scene, camera, clock, composer, bloomPass;
 
 function initThree(){
-  renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
-  renderer.setSize(innerWidth, innerHeight);
-  renderer.setPixelRatio(Math.min(devicePixelRatio, S.quality==='alta'?2:1.25));
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  G.renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
+  G.renderer.setSize(innerWidth, innerHeight);
+  G.renderer.setPixelRatio(Math.min(devicePixelRatio, S.quality==='alta'?2:1.25));
+  G.renderer.shadowMap.enabled = true;
+  G.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  G.renderer.toneMapping = THREE.ACESFilmicToneMapping;
   // exposición contenida: con ACES, un amarillo saturado a plena luz vira a naranja
-  renderer.toneMappingExposure = 0.92;
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  document.getElementById('app').appendChild(renderer.domElement);
+  G.renderer.toneMappingExposure = 0.92;
+  G.renderer.outputColorSpace = THREE.SRGBColorSpace;
+  document.getElementById('app').appendChild(G.renderer.domElement);
 
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color('#0e2138');
-  scene.fog = new THREE.Fog('#123150', 150, 340);
+  G.scene = new THREE.Scene();
+  G.scene.background = new THREE.Color('#0e2138');
+  G.scene.fog = new THREE.Fog('#123150', 150, 340);
 
-  camera = new THREE.PerspectiveCamera(48, innerWidth/innerHeight, 0.1, 600);
-  camera.position.set(0, 42, 66);
-  camera.lookAt(0,0,0);
+  G.camera = new THREE.PerspectiveCamera(48, innerWidth/innerHeight, 0.1, 600);
+  G.camera.position.set(0, 42, 66);
+  G.camera.lookAt(0,0,0);
 
-  clock = new THREE.Clock();
+  G.clock = new THREE.Clock();
 
   // --- POST-PROCESADO: bloom en focos, vallas LED y reflejos ---
-  composer = new EffectComposer(renderer);
-  composer.addPass(new RenderPass(scene, camera));
-  bloomPass = new UnrealBloomPass(
+  G.composer = new EffectComposer(G.renderer);
+  G.composer.addPass(new RenderPass(G.scene, G.camera));
+  G.bloomPass = new UnrealBloomPass(
     new THREE.Vector2(innerWidth, innerHeight),
     0.62,   // intensidad
     0.55,   // radio del halo
     0.82    // umbral: sólo lo muy brillante resplandece
   );
-  composer.addPass(bloomPass);
-  composer.addPass(new OutputPass());   // aplica tonemapping + sRGB al final
+  G.composer.addPass(G.bloomPass);
+  G.composer.addPass(new OutputPass());   // aplica tonemapping + sRGB al final
 
   addEventListener('resize', ()=>{
-    camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
-    composer.setSize(innerWidth, innerHeight);
+    G.camera.aspect = innerWidth/innerHeight; G.camera.updateProjectionMatrix();
+    G.renderer.setSize(innerWidth, innerHeight);
+    G.composer.setSize(innerWidth, innerHeight);
   });
 }
 
@@ -164,7 +155,6 @@ function initThree(){
 // ---------------------------------------------------------------------------
 //  BALÓN
 // ---------------------------------------------------------------------------
-let ball;
 function buildBall(){
   const geo = new THREE.SphereGeometry(BALL_R, 22, 16);
   // textura tipo panel
@@ -175,16 +165,16 @@ function buildBall(){
     x.arc(40+Math.random()*180,40+Math.random()*180,14+Math.random()*10,0,Math.PI*2); x.fill(); }
   const tex=new THREE.CanvasTexture(c);
   const mat = new THREE.MeshStandardMaterial({map:tex, roughness:0.42, metalness:0.02});
-  ball = new THREE.Mesh(geo, mat);
-  ball.castShadow = true;
-  ball.position.set(0,BALL_R,0);
-  ball.userData = { vel:new THREE.Vector3(), spin:new THREE.Vector3(), r:BALL_R };
-  scene.add(ball);
+  G.ball = new THREE.Mesh(geo, mat);
+  G.ball.castShadow = true;
+  G.ball.position.set(0,BALL_R,0);
+  G.ball.userData = { vel:new THREE.Vector3(), spin:new THREE.Vector3(), r:BALL_R };
+  G.scene.add(G.ball);
   // sombra "blob" extra bajo el balón
   const sh = new THREE.Mesh(new THREE.PlaneGeometry(0.55,0.55),
     new THREE.MeshBasicMaterial({map:softShadowTexture(),transparent:true,
       opacity:0.5,depthWrite:false}));
-  sh.rotation.x=-Math.PI/2; sh.position.y=0.02; ball.userData.blob=sh; scene.add(sh);
+  sh.rotation.x=-Math.PI/2; sh.position.y=0.02; G.ball.userData.blob=sh; G.scene.add(sh);
 }
 
 // ---------------------------------------------------------------------------
@@ -288,7 +278,7 @@ class Player {
 
     // el modelo mide ~2.70 unidades; escalarlo a 1.80 m de estatura real
     g.scale.setScalar(1.80/2.70);
-    this.mesh=g; scene.add(g);
+    this.mesh=g; G.scene.add(g);
   }
   setKitVisible(v){}
   update(dt){
@@ -401,8 +391,6 @@ function updatePadUI(){
 // ---------------------------------------------------------------------------
 //  PARTIDO — creación de equipos
 // ---------------------------------------------------------------------------
-const teams = [[],[]]; // arrays de Player
-let names=[[],[]];
 
 function spawnTeams(){
   [0,1].forEach(ti=>{
@@ -477,9 +465,9 @@ function placeKickoff(kickTeam){
   if(punta[0]) punta[0].pos.set(-0.75, 0, -0.85*kd);   // ejecutor
   if(punta[1]) punta[1].pos.set( 2.60, 0, -1.70*kd);   // receptor del primer pase
   separarJugadores(1.5);                                // sin jugadores encimados
-  ball.position.set(0,BALL_R,0); ball.userData.vel.set(0,0,0);
-  ball.userData.kickLock=0;        // si no, el saque hereda el bloqueo de re-toque anterior
-  camTarget.copy(ball.position); S.camSnap=true;   // cámara ya colocada en el saque
+  G.ball.position.set(0,BALL_R,0); G.ball.userData.vel.set(0,0,0);
+  G.ball.userData.kickLock=0;        // si no, el saque hereda el bloqueo de re-toque anterior
+  camTarget.copy(G.ball.position); S.camSnap=true;   // cámara ya colocada en el saque
   S.possession = kickTeam;
   asignarPosicionesIniciales();
 }
@@ -491,7 +479,7 @@ const _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
 function nearestToBall(ti){
   let best=null, bd=1e9;
   teams[ti].forEach(p=>{ if(p.isGK) return;
-    const d=p.pos.distanceToSquared(ball.position); if(d<bd){bd=d;best=p;} });
+    const d=p.pos.distanceToSquared(G.ball.position); if(d<bd){bd=d;best=p;} });
   return best;
 }
 // ---------------------------------------------------------------------------
@@ -518,7 +506,7 @@ function masCercanoLibre(team, h){
   for(const p of teams[team]){
     if(p.isGK) continue;
     if(p.humanOwner && p.humanOwner!==h) continue;
-    const d=p.pos.distanceToSquared(ball.position);
+    const d=p.pos.distanceToSquared(G.ball.position);
     if(d<bd){bd=d;best=p;}
   }
   return best;
@@ -552,9 +540,8 @@ function goalDirZ(ti){ return ti===0? HALF_L : -HALF_L; } // z de la portería r
 // ---------------------------------------------------------------------------
 //  ACTUALIZACIÓN DE BALÓN
 // ---------------------------------------------------------------------------
-let lastTouch = -1;
 function updateBall(dt){
-  const b=ball, u=b.userData;
+  const b=G.ball, u=b.userData;
   if(u.kickLock>0) u.kickLock-=dt;
   u.vel.y -= 22*dt; // gravedad
   b.position.addScaledVector(u.vel, dt);
@@ -573,12 +560,12 @@ function updateBall(dt){
   if(S.phase==='play'){
     if(Math.abs(b.position.x) > HALF_W){
       // fuera por la banda -> saque de banda del equipo contrario al último que tocó
-      const eq = lastTouch===0?1:0;
+      const eq = G.lastTouch===0?1:0;
       startSetPiece('banda', eq, Math.sign(b.position.x)*HALF_W, b.position.z);
     } else if(Math.abs(b.position.z) > HALF_L){
       const fondo = Math.sign(b.position.z);          // +1 = arco del visitante
       const defensor = fondo>0 ? 1 : 0;               // equipo que defiende ese fondo
-      if(lastTouch===defensor){
+      if(G.lastTouch===defensor){
         // la sacó el defensor -> CÓRNER para el atacante
         startSetPiece('corner', 1-defensor, Math.sign(b.position.x||1)*(HALF_W-0.4), fondo*(HALF_L-0.4));
       } else {
@@ -596,10 +583,9 @@ function updateBall(dt){
   u.blob.scale.setScalar(1+ h*0.25); u.blob.material.opacity=Math.max(0.05,0.3- h*0.03);
 }
 
-let goalCooldown=0;
 function handleGoalCheck(){
-  if(S.phase!=='play' || goalCooldown>0) return;
-  const b=ball.position;
+  if(S.phase!=='play' || G.goalCooldown>0) return;
+  const b=G.ball.position;
   if(Math.abs(b.x)<GOAL_W/2 && b.y<GOAL_H){
     if(b.z> HALF_L-0.1){ scoreGoal(0); }       // gol de local en portería +z
     else if(b.z< -HALF_L+0.1){ scoreGoal(1); } // gol de visita en portería -z
@@ -613,8 +599,8 @@ function teamName(t){ return t===0?S.homeTeam.nombre:S.awayTeam.nombre; }
 
 function startSetPiece(type, team, x, z){
   S.phase='setpiece'; S.phaseT=0;
-  ball.userData.vel.set(0,0,0); ball.userData.kickLock=0;
-  ball.position.set(x, BALL_R, z);
+  G.ball.userData.vel.set(0,0,0); G.ball.userData.kickLock=0;
+  G.ball.position.set(x, BALL_R, z);
   if(S._owner){ S._owner.hasBall=false; S._owner=null; }
   // ejecutor: el portero en saque de puerta y penal-atajador aparte; si no, el más cercano
   let taker;
@@ -622,7 +608,7 @@ function startSetPiece(type, team, x, z){
   else {
     taker=null; let bd=1e9;
     for(const p of teams[team]){ if(p.isGK) continue;
-      const d=distXZ(p.pos, ball.position); if(d<bd){bd=d;taker=p;} }
+      const d=distXZ(p.pos, G.ball.position); if(d<bd){bd=d;taker=p;} }
   }
   S.setPiece = { type, team, taker, x, z, taken:false };
   positionForSetPiece(type, team, x, z, taker);
@@ -657,10 +643,10 @@ function positionForSetPiece(type, team, x, z, taker){
     } else {
       // banda / puerta / falta: formación normal, con el rival a distancia
       p.pos.copy(_v);
-      if(ti===rival && distXZ(p.pos, ball.position)<9){
-        const away=_v2.copy(p.pos).sub(ball.position); away.y=0;
+      if(ti===rival && distXZ(p.pos, G.ball.position)<9){
+        const away=_v2.copy(p.pos).sub(G.ball.position); away.y=0;
         if(away.lengthSq()<0.01) away.set(1,0,0);
-        away.setLength(9.5); p.pos.copy(ball.position).add(away); p.pos.y=0;
+        away.setLength(9.5); p.pos.copy(G.ball.position).add(away); p.pos.y=0;
       }
     }
     clampToField(p.pos);
@@ -701,7 +687,6 @@ function takeSetPiece(){
 // ---------------------------------------------------------------------------
 //  FALTAS, TARJETAS Y PENALES
 // ---------------------------------------------------------------------------
-const cards = [{a:0,r:0},{a:0,r:0}];   // amarillas/rojas por equipo
 function inPenaltyBox(pos, defTeam){
   const gz = defTeam===0? -HALF_L : HALF_L;
   return Math.abs(pos.x) < 20.15 && Math.abs(pos.z-gz) < 16.5;
@@ -759,15 +744,15 @@ function tryPossession(dt){
   // ¿quién toca el balón?
   let owner=null, od=1e9;
   for(let ti=0;ti<2;ti++)for(const p of teams[ti]){
-    const d=distXZ(p.pos, ball.position);
+    const d=distXZ(p.pos, G.ball.position);
     if(d<od){od=d; owner=p;}
   }
-  const b=ball.userData;
+  const b=G.ball.userData;
   // El radio de captura debe ser MAYOR que el toque de conducción; si no, el balón
   // se sale del radio, se pierde la posesión y sale disparado como una patada.
-  if(owner && od<CAPTURA && ball.position.y<1.4 && owner.stunTimer<=0 && b.kickLock<=0){
+  if(owner && od<CAPTURA && G.ball.position.y<1.4 && owner.stunTimer<=0 && b.kickLock<=0){
     S.possession = owner.team;
-    lastTouch = owner.team;
+    G.lastTouch = owner.team;
     // REGATE: el toque se alarga con la velocidad. Al trotar el balón va pegado al pie;
     // al esprintar se escapa hacia adelante y cuesta más controlarlo.
     const dir = new THREE.Vector3(Math.sin(owner.facing),0,Math.cos(owner.facing));
@@ -779,8 +764,8 @@ function tryPossession(dt){
     const adher = (owner.humanOwner?12:8) * (owner.sprinting?0.6:1.0);
     const relV = b.vel.length();
     if(relV<22){
-      ball.position.lerp(target, Math.min(1, dt*adher));
-      ball.position.y = Math.max(ball.position.y, BALL_R);
+      G.ball.position.lerp(target, Math.min(1, dt*adher));
+      G.ball.position.y = Math.max(G.ball.position.y, BALL_R);
       // el balón ACOMPAÑA al jugador; nada de fuerzas de muelle acumuladas
       b.vel.set(owner.vel.x, Math.min(b.vel.y,0), owner.vel.z);
     }
@@ -788,9 +773,9 @@ function tryPossession(dt){
     // guardar el poseedor
     S._owner = owner; estad.ticksConDueno++;
     // ¿el receptor estaba en posición adelantada?
-    if(offsidePend){
-      if(owner===offsidePend){ callOffside(owner); return; }
-      offsidePend=null;              // la tocó otro: se anula la sanción
+    if(G.offsidePend){
+      if(owner===G.offsidePend){ callOffside(owner); return; }
+      G.offsidePend=null;              // la tocó otro: se anula la sanción
     }
   } else {
     if(S._owner) S._owner.hasBall=false;
@@ -799,12 +784,12 @@ function tryPossession(dt){
 }
 
 function kickBall(from, dirVec, power, lift){
-  const u=ball.userData;
+  const u=G.ball.userData;
   const d=_v.copy(dirVec); d.y=0; if(d.lengthSq()<1e-4) d.set(Math.sin(from.facing),0,Math.cos(from.facing));
   d.normalize();
   u.vel.set(d.x*power, lift, d.z*power);
-  ball.position.y=Math.max(ball.position.y,0.36);
-  lastTouch = from.team;
+  G.ball.position.y=Math.max(G.ball.position.y,0.36);
+  G.lastTouch = from.team;
   u.kickLock = 0.3;              // evita que el mismo pie re-capture el balón
   if(S._owner){ S._owner.hasBall=false; S._owner=null; }
   // el saque de centro se considera ejecutado en cuanto se toca el balón
@@ -828,28 +813,27 @@ function doPass(p){
   }
   if(!best) best = mates.sort((a,b)=>distXZ(p.pos,a.pos)-distXZ(p.pos,b.pos))[0];
   if(!best) return;
-  offsidePend = isOffside(best, p) ? best : null;   // se sanciona al recibir
+  G.offsidePend = isOffside(best, p) ? best : null;   // se sanciona al recibir
   const dir=_v2.copy(best.pos).sub(p.pos); const dist=dir.length();
   const power=Math.min(6+dist*0.7, 30);
   kickBall(p, dir, power, Math.min(dist*0.12,3));
   // si el pasador lo lleva un humano, ese humano pasa a controlar al receptor
-  if(p.humanOwner){ asignarControl(p.humanOwner, best); refreshRings(); passReceiver=best; }
+  if(p.humanOwner){ asignarControl(p.humanOwner, best); refreshRings(); G.passReceiver=best; }
 }
 // --- FUERA DE JUEGO ---
 // Se evalúa en el instante del pase: el receptor está adelantado si supera al
 // penúltimo defensor rival, está en campo contrario y por delante del balón.
-let offsidePend = null;
 function isOffside(receptor, pasador){
   const ti = receptor.team, dir = ti===0? 1 : -1;
   const rz = receptor.pos.z*dir;
   if(rz <= 0) return false;                              // en su propio campo, nunca
-  if(rz <= ball.position.z*dir) return false;            // no está por delante del balón
+  if(rz <= G.ball.position.z*dir) return false;            // no está por delante del balón
   const zs = teams[1-ti].map(o=>o.pos.z*dir).sort((a,b)=>b-a);
   const penultimo = zs.length>1 ? zs[1] : -1e9;          // portero + último defensa
   return rz > penultimo + 0.5;
 }
 function callOffside(receptor){
-  offsidePend = null;
+  G.offsidePend = null;
   announce('FUERA DE JUEGO', teamName(1-receptor.team));
   startSetPiece('falta', 1-receptor.team, receptor.pos.x, receptor.pos.z);
 }
@@ -859,7 +843,6 @@ function nearestOpponentDist(p){
   for(const o of opp){ const dd=distXZ(p.pos,o.pos); if(dd<d)d=dd; }
   return d;
 }
-let passReceiver=null;
 
 function doShoot(p, power){
   estad.tiros++;
@@ -911,13 +894,13 @@ function updateAI(dt){
       else            p.stamina = Math.min(1, p.stamina + dt*0.06);
 
       if(targetsBall){
-        desired.copy(ball.position).sub(p.pos);
+        desired.copy(G.ball.position).sub(p.pos);
       } else {
         // volver a posición de formación desplazada por el balón
         homePos(ti, p.formation, _v2);
-        const ballBias = ball.position.z * 0.18;
+        const ballBias = G.ball.position.z * 0.18;
         _v2.z += ballBias;
-        _v2.x = _v2.x*0.7 + ball.position.x*0.25;
+        _v2.x = _v2.x*0.7 + G.ball.position.x*0.25;
         desired.copy(_v2).sub(p.pos);
       }
       const maxSpd = baseSpeed(p) * (targetsBall?diff.ai:0.9);
@@ -945,7 +928,7 @@ function shouldChase(p){
   // controlado, el 2º más cercano de la IA sale a presionar también.
   const mine = teams[p.team];
   let c1=null,d1=1e9,c2=null,d2=1e9;
-  for(const m of mine){ if(m.isGK) continue; const d=distXZ(m.pos,ball.position);
+  for(const m of mine){ if(m.isGK) continue; const d=distXZ(m.pos,G.ball.position);
     if(d<d1){ d2=d1;c2=c1; d1=d;c1=m; } else if(d<d2){ d2=d;c2=m; } }
   // si al más cercano lo lleva una persona, presiona el segundo (la IA no se queda quieta)
   if(c1 && c1.humanOwner) return p===c2;
@@ -995,17 +978,17 @@ function aiWithBall(p, diff, dt){
 function goalkeeper(p, dt){
   const gz = p.team===0? -HALF_L : HALF_L; // su propia portería
   // posición predicha del balón (anticipación de la atajada)
-  const bp = _v2.copy(ball.position).addScaledVector(ball.userData.vel, 0.22);
+  const bp = _v2.copy(G.ball.position).addScaledVector(G.ball.userData.vel, 0.22);
   const targetX = Math.max(-GOAL_W/2-1.2, Math.min(GOAL_W/2+1.2, bp.x*0.9));
   const line = gz + (p.team===0? 2.2 : -2.2);
   _v.set(targetX,0,line).sub(p.pos);
   // si el balón se acerca a su zona, sale a achicar hacia el punto predicho
-  if(distXZ(p.pos,ball.position)<15 && Math.abs(ball.position.z-gz)<22){
+  if(distXZ(p.pos,G.ball.position)<15 && Math.abs(G.ball.position.z-gz)<22){
     _v.copy(bp).sub(p.pos); _v.y=0;
   }
   steer(p, _v, 7.2, dt);
   // atajar y despejar
-  if(distXZ(p.pos,ball.position)<1.9 && ball.position.y<2.4){
+  if(distXZ(p.pos,G.ball.position)<1.9 && G.ball.position.y<2.4){
     estad.despejesPortero++;
     const out=_v2.set((rng()-0.5)*22, 0, p.team===0?22:-22);
     kickBall(p, out, 26, 4);
@@ -1065,7 +1048,7 @@ function updateHuman(dt, h){
 
 // --- CABEZAZO: sólo si el balón viene alto y cerca ---
 function canHead(p){
-  const b=ball.position;
+  const b=G.ball.position;
   return b.y>1.1 && b.y<3.6 && distXZ(p.pos,b)<2.5 && p.stunTimer<=0;
 }
 function header(p, aPuerta){
@@ -1080,7 +1063,7 @@ function header(p, aPuerta){
     kickBall(p, dir, 14, 3.0);
   }
   p.heading=0.35;   // animación
-  lastTouch=p.team;
+  G.lastTouch=p.team;
 }
 
 // --- BARRIDA: limpia si llega al balón, falta si arrolla al rival ---
@@ -1089,13 +1072,13 @@ function slideTackle(p){
   p.slideCd=1.3; p.sliding=0.55;
   const dir=new THREE.Vector3(Math.sin(p.facing),0,Math.cos(p.facing));
   p.vel.copy(dir).multiplyScalar(baseSpeed(p)*1.55);
-  const db=distXZ(p.pos, ball.position);
+  const db=distXZ(p.pos, G.ball.position);
   const victim = (S._owner && S._owner.team!==p.team) ? S._owner : null;
   const dv = victim? distXZ(p.pos, victim.pos) : 99;
   if(db<2.7 && db<=dv+0.35){
     // llega primero al balón: entrada legal
-    ball.userData.vel.set(dir.x*11, 1.3, dir.z*11);
-    ball.userData.kickLock=0.28; lastTouch=p.team;
+    G.ball.userData.vel.set(dir.x*11, 1.3, dir.z*11);
+    G.ball.userData.kickLock=0.28; G.lastTouch=p.team;
     if(S._owner){ S._owner.hasBall=false; S._owner=null; }
     S.possession=p.team; playKick();
   } else if(victim && dv<2.5){
@@ -1112,7 +1095,7 @@ function recordReplay(dt){
   replay.acc += dt;
   if(replay.acc < 1/REPLAY_HZ) return;
   replay.acc = 0;
-  const f = { b:[ball.position.x, ball.position.y, ball.position.z], l:[] };
+  const f = { b:[G.ball.position.x, G.ball.position.y, G.ball.position.z], l:[] };
   for(const arr of teams) for(const pl of arr) f.l.push({pl, x:pl.pos.x, z:pl.pos.z, fa:pl.facing});
   replay.frames.push(f);
   if(replay.frames.length > replay.max) replay.frames.shift();
@@ -1129,8 +1112,8 @@ function playReplay(dt){
   const i = Math.floor(replay.t);
   if(i >= fr.length-1) return false;
   const f=fr[i], g=fr[i+1], a=replay.t-i;      // interpolación entre fotogramas
-  ball.position.set(f.b[0]+(g.b[0]-f.b[0])*a, f.b[1]+(g.b[1]-f.b[1])*a, f.b[2]+(g.b[2]-f.b[2])*a);
-  ball.userData.blob.position.set(ball.position.x,0.02,ball.position.z);
+  G.ball.position.set(f.b[0]+(g.b[0]-f.b[0])*a, f.b[1]+(g.b[1]-f.b[1])*a, f.b[2]+(g.b[2]-f.b[2])*a);
+  G.ball.userData.blob.position.set(G.ball.position.x,0.02,G.ball.position.z);
   const dtE = Math.max(dt,1e-4);
   for(let k=0;k<f.l.length;k++){
     const e=f.l[k], e2=g.l[k]; if(!e||!e2||e.pl!==e2.pl) continue;
@@ -1143,18 +1126,18 @@ function playReplay(dt){
 function endReplay(){
   document.getElementById('replayFx').classList.remove('show');
   replay.frames.length=0;
-  placeKickoff( lastScorer!=null ? 1-lastScorer : (S.score[0]>S.score[1]?1:0) );
+  placeKickoff( G.lastScorer!=null ? 1-G.lastScorer : (S.score[0]>S.score[1]?1:0) );
   S.phase='kickoff'; S.phaseT=0;
 }
 // cámara cinematográfica de repetición: baja, detrás del arco, en travelling
 function replayCamera(dt){
-  const gz = (lastScorer===0? HALF_L : -HALF_L);
+  const gz = (G.lastScorer===0? HALF_L : -HALF_L);
   const s = Math.sign(gz);
   const t = replay.t/REPLAY_HZ;
   const ang = -0.5 + t*0.30;
-  camera.position.lerp(_v.set(Math.sin(ang)*22, 4.5+t*0.8, gz + s*(14 - t*1.2)), Math.min(1,dt*3));
-  if(Math.abs(camera.fov-34)>0.02){ camera.fov=34; camera.updateProjectionMatrix(); }
-  camera.lookAt(ball.position.x*0.7, 1.3, ball.position.z*0.95);
+  G.camera.position.lerp(_v.set(Math.sin(ang)*22, 4.5+t*0.8, gz + s*(14 - t*1.2)), Math.min(1,dt*3));
+  if(Math.abs(G.camera.fov-34)>0.02){ G.camera.fov=34; G.camera.updateProjectionMatrix(); }
+  G.camera.lookAt(G.ball.position.x*0.7, 1.3, G.ball.position.z*0.95);
 }
 
 // ---------------------------------------------------------------------------
@@ -1164,6 +1147,7 @@ const camTarget = new THREE.Vector3();
 // En 16:9, encuadrar TODO el ancho del campo (68 m, escorzado) obliga a mostrar
 // ~70 m de largo. Con menos, la pantalla se llena sólo de césped.
 const VIEW_LEN = 70;
+G.curView = VIEW_LEN;   // encuadre inicial (antes era el valor del let)
 // distancia lateral necesaria para encuadrar VIEW_LEN metros según el aspecto
 // La cámara vive DENTRO del cuenco del estadio: distancia lateral fija (nunca se mete
 // en la grada) y FOV dinámico para encuadrar siempre VIEW_LEN metros sea cual sea el aspecto.
@@ -1179,21 +1163,19 @@ const AIM_X = (()=>{
   // a cambio de que entren las gradas y las luces del fondo.
   return -CAM_DIST + CAM_H/Math.tan((thNear+thFar)/2) + 6;
 })();
-let __camCalls=0, __camLast=null;
-let curView = VIEW_LEN;
 function updateCamera(dt){
-  __camCalls++;
+  G.camCalls++;
   if(S.phase==='replay'){ replayCamera(dt); return; }   // cámara cinematográfica
-  camTarget.lerp(ball.position, Math.min(1,dt*2.6));
+  camTarget.lerp(G.ball.position, Math.min(1,dt*2.6));
   // encuadre más cerrado en saques y jugadas paradas (dramatismo)
   const objetivo = (S.phase==='kickoff'||S.phase==='setpiece') ? 50 : VIEW_LEN;
-  if(S.camSnap) curView = objetivo;
-  else curView += (objetivo-curView)*Math.min(1,dt*2.6);
-  const hFov = 2*Math.atan((curView/2)/CAM_DIST);
-  const vFovDeg = 2*Math.atan(Math.tan(hFov/2)/camera.aspect) * 180/Math.PI;
+  if(S.camSnap) G.curView = objetivo;
+  else G.curView += (objetivo-G.curView)*Math.min(1,dt*2.6);
+  const hFov = 2*Math.atan((G.curView/2)/CAM_DIST);
+  const vFovDeg = 2*Math.atan(Math.tan(hFov/2)/G.camera.aspect) * 180/Math.PI;
   const fovDeg = Math.max(24, Math.min(72, vFovDeg));
-  __camLast = fovDeg;
-  if(Math.abs(camera.fov-fovDeg)>0.02){ camera.fov=fovDeg; camera.updateProjectionMatrix(); }
+  G.camLast = fovDeg;
+  if(Math.abs(G.camera.fov-fovDeg)>0.02){ G.camera.fov=fovDeg; G.camera.updateProjectionMatrix(); }
   // CÁMARA LATERAL: en la banda (-X), sigue el juego a lo largo del campo (Z).
   // Así las porterías quedan a izquierda y derecha, y el local ataca hacia la derecha.
   const desired = _v.set(
@@ -1201,12 +1183,12 @@ function updateCamera(dt){
     CAM_H + Math.abs(camTarget.x)*0.04,
     camTarget.z*0.86
   );
-  if(S.camSnap){ camera.position.copy(desired); S.camSnap=false; }   // colocación instantánea
-  else camera.position.lerp(desired, Math.min(1,dt*2.3));
+  if(S.camSnap){ G.camera.position.copy(desired); S.camSnap=false; }   // colocación instantánea
+  else G.camera.position.lerp(desired, Math.min(1,dt*2.3));
   // Apunta al MEDIO ANGULAR del ancho del campo (no al centro geométrico): así la
   // banda visible queda centrada en el terreno y no se pierde la línea cercana.
   _v2.set(AIM_X + camTarget.x*0.30, 1.0, camTarget.z*0.92);
-  camera.lookAt(_v2);
+  G.camera.lookAt(_v2);
 }
 
 // ---------------------------------------------------------------------------
@@ -1214,8 +1196,8 @@ function updateCamera(dt){
 // ---------------------------------------------------------------------------
 function scoreGoal(team){
   estad.goles++;
-  S.score[team]++; lastScorer=team;
-  goalCooldown=3.2;
+  S.score[team]++; G.lastScorer=team;
+  G.goalCooldown=3.2;
   S.phase='goal'; S.phaseT=0;
   updateScorebug();
   const scorer = names[team][ (7+ (rng()*3|0)) ];
@@ -1277,7 +1259,7 @@ function updatePhase(dt){
   if(S.phase==='kickoff'){
     // si saca la IA, pone el balón en juego sola
     if(!equipoTieneHumano(S.kickTeam) && S.phaseT>1.1 && !S.kickoffTaken){
-      const t=teams[S.kickTeam].find(p=>!p.isGK && distXZ(p.pos,ball.position)<3.5);
+      const t=teams[S.kickTeam].find(p=>!p.isGK && distXZ(p.pos,G.ball.position)<3.5);
       if(t) doPass(t); else { S.kickoffTaken=true; S.phase='play'; S.phaseT=0; }
     }
     // si saca una persona, el juego espera a su primer pase (con tope de seguridad)
@@ -1299,7 +1281,6 @@ function updatePhase(dt){
     }
   }
 }
-let lastScorer=null;
 
 function endMatch(){
   S.phase='full'; S.running=false;
@@ -1331,91 +1312,11 @@ function endMatch(){
 // ---------------------------------------------------------------------------
 //  CONFETI de gol
 // ---------------------------------------------------------------------------
-let confetti=null;
-function buildConfetti(){
-  const N=300; const geo=new THREE.BufferGeometry();
-  const pos=new Float32Array(N*3), col=new Float32Array(N*3);
-  geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
-  geo.setAttribute('color', new THREE.BufferAttribute(col,3));
-  const mat=new THREE.PointsMaterial({size:0.5,vertexColors:true,transparent:true});
-  confetti=new THREE.Points(geo,mat); confetti.visible=false;
-  confetti.userData={vel:new Float32Array(N*3),life:0,N};
-  scene.add(confetti);
-}
-function burstConfetti(team){
-  const z = team===0? HALF_L : -HALF_L;
-  const pos=confetti.geometry.attributes.position.array;
-  const col=confetti.geometry.attributes.color.array;
-  const vel=confetti.userData.vel; const c=new THREE.Color();
-  const t = team===0?S.homeTeam:S.awayTeam;
-  for(let i=0;i<confetti.userData.N;i++){
-    pos[i*3]= (Math.random()-0.5)*14; pos[i*3+1]=2+Math.random()*4; pos[i*3+2]= z*0.9 + (Math.random()-0.5)*8;
-    vel[i*3]=(Math.random()-0.5)*6; vel[i*3+1]=6+Math.random()*8; vel[i*3+2]=(Math.random()-0.5)*6;
-    c.set(Math.random()<0.5?t.c1:t.c2); col[i*3]=c.r;col[i*3+1]=c.g;col[i*3+2]=c.b;
-  }
-  confetti.geometry.attributes.position.needsUpdate=true;
-  confetti.geometry.attributes.color.needsUpdate=true;
-  confetti.visible=true; confetti.userData.life=2.2;
-}
-function updateConfetti(dt){
-  if(!confetti||!confetti.visible) return;
-  const pos=confetti.geometry.attributes.position.array, vel=confetti.userData.vel;
-  for(let i=0;i<confetti.userData.N;i++){
-    vel[i*3+1]-=14*dt;
-    pos[i*3]+=vel[i*3]*dt; pos[i*3+1]+=vel[i*3+1]*dt; pos[i*3+2]+=vel[i*3+2]*dt;
-  }
-  confetti.geometry.attributes.position.needsUpdate=true;
-  confetti.userData.life-=dt;
-  if(confetti.userData.life<=0) confetti.visible=false;
-}
 
 // ---------------------------------------------------------------------------
 //  MULTITUD animada (olas sutiles)
 // ---------------------------------------------------------------------------
-let crowdT=0;
-function updateCrowd(dt){
-  crowdT+=dt;
-  // destellos de cámaras fotográficas en las gradas
-  if(flashes){
-    const pos=flashes.geometry.attributes.position.array;
-    const N=flashes.userData.N, ph=flashes.userData.phase;
-    const op=flashes.geometry.attributes.alpha;
-    for(let i=0;i<N;i++){
-      ph[i]-=dt;
-      if(ph[i]<=0){ ph[i]=1.5+Math.random()*7; op.array[i]=1; }
-      else op.array[i]=Math.max(0, op.array[i]-dt*7);
-    }
-    op.needsUpdate=true;
-  }
-}
 // puntos blancos que parpadean en las gradas (flashes del público)
-let flashes=null;
-function buildFlashes(){
-  const N=260, pos=new Float32Array(N*3), alpha=new Float32Array(N), phase=new Float32Array(N);
-  for(let i=0;i<N;i++){
-    const lado=(Math.random()*4)|0;
-    let x,z;
-    if(lado<2){ x=(Math.random()<0.5?-1:1)*(HALF_W+30+Math.random()*18); z=(Math.random()-0.5)*(F.L+20); }
-    else      { z=(Math.random()<0.5?-1:1)*(HALF_L+18+Math.random()*20); x=(Math.random()-0.5)*(F.W+26); }
-    pos[i*3]=x; pos[i*3+1]=3+Math.random()*11; pos[i*3+2]=z;
-    alpha[i]=0; phase[i]=Math.random()*8;
-  }
-  const g=new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos,3));
-  g.setAttribute('alpha', new THREE.BufferAttribute(alpha,1));
-  const m=new THREE.ShaderMaterial({
-    transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
-    vertexShader:`attribute float alpha; varying float vA;
-      void main(){ vA=alpha; vec4 mv=modelViewMatrix*vec4(position,1.0);
-      gl_PointSize=7.0*(60.0/-mv.z); gl_Position=projectionMatrix*mv; }`,
-    fragmentShader:`varying float vA;
-      void main(){ vec2 d=gl_PointCoord-vec2(0.5); float r=length(d);
-      if(r>0.5) discard; gl_FragColor=vec4(1.0,0.97,0.9, vA*(1.0-r*2.0)); }`
-  });
-  flashes=new THREE.Points(g,m);
-  flashes.userData={N, phase};
-  scene.add(flashes);
-}
 
 // ---------------------------------------------------------------------------
 //  AUDIO procedural (WebAudio) — silbato, patada, ambiente
@@ -1438,7 +1339,7 @@ function drawMinimap(){
     mmx.fillStyle= ti===0?S.homeTeam.c1:S.awayTeam.c1;
     for(const p of teams[ti]){ mmx.beginPath(); mmx.arc(toX(p.pos.z),toY(p.pos.x),2.4,0,7); mmx.fill(); }
   }
-  mmx.fillStyle='#fff'; mmx.beginPath(); mmx.arc(toX(ball.position.z),toY(ball.position.x),2,0,7); mmx.fill();
+  mmx.fillStyle='#fff'; mmx.beginPath(); mmx.arc(toX(G.ball.position.z),toY(G.ball.position.x),2,0,7); mmx.fill();
 }
 
 // ---------------------------------------------------------------------------
@@ -1447,7 +1348,6 @@ function drawMinimap(){
 // UN TICK de simulación, siempre con el mismo dt. Todo lo que decide el
 // resultado del partido vive aquí dentro; el render va aparte, a la tasa
 // del monitor. Sin esto no hay servidor autoritativo posible.
-let simTick = 0;
 function stepSim(dt){
   updatePhase(dt);
   if(S.phase==='play'||S.phase==='kickoff'){
@@ -1465,20 +1365,19 @@ function stepSim(dt){
     }
   }
   for(let ti=0;ti<2;ti++)for(const p of teams[ti]) p.update(dt);
-  if(goalCooldown>0) goalCooldown-=dt;
-  simTick++;
+  if(G.goalCooldown>0) G.goalCooldown-=dt;
+  G.simTick++;
 }
 
-let acumulador = 0;
 function animate(){
   requestAnimationFrame(animate);
-  const frameDt=Math.min(clock.getDelta(), 0.25);
+  const frameDt=Math.min(G.clock.getDelta(), 0.25);
   if(S.running && !S.paused){
     pollInput();                       // los dispositivos se muestrean una vez por frame
-    acumulador += frameDt;
+    G.acumulador += frameDt;
     let pasos=0;
-    while(acumulador >= DT && pasos < MAX_PASOS){ stepSim(DT); acumulador -= DT; pasos++; }
-    if(pasos === MAX_PASOS) acumulador = 0;   // se descarta el atraso en vez de acumularlo
+    while(G.acumulador >= DT && pasos < MAX_PASOS){ stepSim(DT); G.acumulador -= DT; pasos++; }
+    if(pasos === MAX_PASOS) G.acumulador = 0;   // se descarta el atraso en vez de acumularlo
     // --- presentación: a la tasa del monitor, no del simulador ---
     updateConfetti(frameDt);
     updateCrowd(frameDt);
@@ -1488,8 +1387,8 @@ function animate(){
     drawMinimap();
   }
   // con calidad "media" se salta el post-procesado para ganar rendimiento
-  if(S.quality==='alta' && composer) composer.render();
-  else renderer.render(scene, camera);
+  if(S.quality==='alta' && G.composer) G.composer.render();
+  else G.renderer.render(G.scene, G.camera);
 }
 
 // ---------------------------------------------------------------------------
@@ -1504,104 +1403,14 @@ function togglePause(){
 // ---------------------------------------------------------------------------
 //  MODO TORNEO — liga de todos contra todos
 // ---------------------------------------------------------------------------
-const LIGA = { activa:false, jornada:0, calendario:[], tabla:null, ultimos:[] };
 
-function generarCalendario(ids){
-  const n=ids.length, arr=[...ids], rondas=[];
-  for(let r=0;r<n-1;r++){
-    const jornada=[];
-    for(let i=0;i<n/2;i++) jornada.push([arr[i], arr[n-1-i]]);
-    rondas.push(jornada);
-    arr.splice(1,0,arr.pop());        // método del círculo: rota todos menos el primero
-  }
-  return rondas;
-}
-function crearLiga(){
-  LIGA.tabla={};
-  TEAMS.forEach(t=>LIGA.tabla[t.id]={id:t.id,pj:0,g:0,e:0,p:0,gf:0,gc:0,pts:0});
-  LIGA.calendario=generarCalendario(TEAMS.map(t=>t.id));
-  LIGA.jornada=0; LIGA.activa=true; LIGA.ultimos=[];
-}
-function registrar(idL, idV, gl, gv){
-  const L=LIGA.tabla[idL], V=LIGA.tabla[idV];
-  L.pj++; V.pj++; L.gf+=gl; L.gc+=gv; V.gf+=gv; V.gc+=gl;
-  if(gl>gv){ L.g++; V.p++; L.pts+=3; }
-  else if(gl<gv){ V.g++; L.p++; V.pts+=3; }
-  else { L.e++; V.e++; L.pts++; V.pts++; }
-  LIGA.ultimos.push({idL,idV,gl,gv});
-}
 // marcador simulado por fuerza de plantilla (Poisson)
-function golesSimulados(fuerza, rival){
-  const lam=Math.max(0.18, 1.15 + (fuerza-rival)*0.05);
-  let k=0, p=1, L=Math.exp(-lam);
-  do { k++; p*=Math.random(); } while(p>L);
-  return k-1;
-}
-function simularJornada(saltar){
-  const j=LIGA.calendario[LIGA.jornada]; if(!j) return;
-  for(const [a,b] of j){
-    if(saltar && (a===saltar[0]&&b===saltar[1] || a===saltar[1]&&b===saltar[0])) continue;
-    const A=TEAMS.find(t=>t.id===a), B=TEAMS.find(t=>t.id===b);
-    registrar(a,b, golesSimulados(A.ov+3,B.ov), golesSimulados(B.ov,A.ov+3));
-  }
-}
-function clasificacion(){
-  return Object.values(LIGA.tabla).sort((x,y)=>
-    y.pts-x.pts || (y.gf-y.gc)-(x.gf-x.gc) || y.gf-x.gf);
-}
 // el partido del usuario en la jornada actual
-function partidoUsuario(){
-  const j=LIGA.calendario[LIGA.jornada]; if(!j) return null;
-  return j.find(([a,b])=>a===S.homeTeam.id||b===S.homeTeam.id) || null;
-}
 
-function mostrarTorneo(){
-  document.getElementById('menu').classList.add('hidden');
-  document.getElementById('hud').style.display='none';
-  const el=document.getElementById('torneo');
-  el.classList.remove('hidden');
-  const cuerpo=document.getElementById('tablaBody');
-  cuerpo.innerHTML = clasificacion().map((r,i)=>{
-    const t=TEAMS.find(x=>x.id===r.id);
-    const yo = r.id===S.homeTeam.id;
-    return `<tr class="${yo?'yo':''}">
-      <td>${i+1}</td>
-      <td><span class="bd" style="background:${badgeCSS(t)}"></span>${t.nombre}</td>
-      <td>${r.pj}</td><td>${r.g}</td><td>${r.e}</td><td>${r.p}</td>
-      <td>${r.gf}</td><td>${r.gc}</td><td>${r.gf-r.gc>0?'+':''}${r.gf-r.gc}</td>
-      <td><b>${r.pts}</b></td></tr>`;
-  }).join('');
-
-  // resultados de la jornada anterior
-  const res=document.getElementById('ultimos');
-  res.innerHTML = LIGA.ultimos.length
-    ? '<h4>Última jornada</h4>' + LIGA.ultimos.map(u=>{
-        const A=TEAMS.find(t=>t.id===u.idL), B=TEAMS.find(t=>t.id===u.idV);
-        return `<div class="res"><span>${A.nombre}</span><b>${u.gl} - ${u.gv}</b><span>${B.nombre}</span></div>`;
-      }).join('') : '';
-
-  const prox=partidoUsuario();
-  const btn=document.getElementById('jugarJornada');
-  const info=document.getElementById('proxInfo');
-  if(prox && LIGA.jornada < LIGA.calendario.length){
-    const rivalId = prox[0]===S.homeTeam.id? prox[1] : prox[0];
-    const rival=TEAMS.find(t=>t.id===rivalId);
-    const local = prox[0]===S.homeTeam.id;
-    S.awayTeam = rival;
-    info.innerHTML=`Jornada ${LIGA.jornada+1} de ${LIGA.calendario.length} ·
-      <b>${S.homeTeam.nombre}</b> vs <b>${rival.nombre}</b> ${local?'(local)':'(visitante)'}`;
-    btn.style.display=''; btn.textContent='▶ Jugar jornada '+(LIGA.jornada+1);
-  } else {
-    const campeon=clasificacion()[0];
-    info.innerHTML=`<b>Torneo finalizado</b> · Campeón: ${TEAMS.find(t=>t.id===campeon.id).nombre}`;
-    btn.style.display='none';
-  }
-}
 
 // ---------------------------------------------------------------------------
 //  MENÚ / UI
 // ---------------------------------------------------------------------------
-function badgeCSS(t){ return `linear-gradient(135deg,${t.c1} 0 50%, ${t.c2} 50% 100%)`; }
 
 function buildMenu(){
   const hl=document.getElementById('homeList'), al=document.getElementById('awayList');
@@ -1744,9 +1553,9 @@ function setupHUDTeams(){
 function startMatch(){
   ensureAudio();
   // limpiar equipos previos
-  teams.forEach(arr=>arr.forEach(p=>scene.remove(p.mesh))); teams[0]=[]; teams[1]=[];
+  teams.forEach(arr=>arr.forEach(p=>G.scene.remove(p.mesh))); teams[0]=[]; teams[1]=[];
   spawnTeams();
-  S.score=[0,0]; S.clock=0; S.half=1; lastScorer=null;
+  S.score=[0,0]; S.clock=0; S.half=1; G.lastScorer=null;
   cards[0]={a:0,r:0}; cards[1]={a:0,r:0}; S.setPiece=null;
   replay.frames.length=0;   // el buffer guarda referencias a los Player del partido anterior
   if(!S.humans.length) crearHumanos(S.numHumanos);
@@ -1775,10 +1584,10 @@ document.getElementById('toMenu').onclick=()=>{
 // ---------------------------------------------------------------------------
 function boot(){
   initThree();
-  buildSky(scene);
-  buildLights(scene, S.quality);
-  buildField(scene);
-  buildStadium(scene);
+  buildSky(G.scene);
+  buildLights(G.scene, S.quality);
+  buildField(G.scene);
+  buildStadium(G.scene);
   buildFlashes();
   buildBall();
   buildConfetti();
@@ -1786,11 +1595,11 @@ function boot(){
   updatePadUI();
   window.__dbg = {
     // --- lectura ---
-    get cam(){return camera.position;}, get ball(){return ball.position;}, S, teams,
-    get camera(){return camera;}, get scene(){return scene;},
-    get camCalls(){return __camCalls;}, get camDist(){return __camLast;},
+    get cam(){return G.camera.position;}, get ball(){return G.ball.position;}, S, teams,
+    get camera(){return G.camera;}, get scene(){return G.scene;},
+    get camCalls(){return G.camCalls;}, get camDist(){return G.camLast;},
     get canvases(){return document.querySelectorAll('canvas').length;},
-    get tick(){return simTick;},
+    get tick(){return G.simTick;},
     LIGA, simularJornada, clasificacion, mostrarTorneo,
 
     // --- determinismo ---
@@ -1800,13 +1609,13 @@ function boot(){
     stepN(n){ for(let i=0;i<n;i++) stepSim(DT); return hashEstado(); },
     resetGolden(semilla=12345){              // mismo reinicio que golden(), sin correr
       S.humans=[]; sembrar(semilla);
-      teams.forEach(arr=>arr.forEach(pl=>scene.remove(pl.mesh)));
+      teams.forEach(arr=>arr.forEach(pl=>G.scene.remove(pl.mesh)));
       teams[0]=[]; teams[1]=[]; spawnTeams();
-      S.score=[0,0]; S.clock=0; S.half=1; lastScorer=null;
+      S.score=[0,0]; S.clock=0; S.half=1; G.lastScorer=null;
       cards[0]={a:0,r:0}; cards[1]={a:0,r:0}; S.setPiece=null;
       replay.frames.length=0; replay.acc=0; replay.t=0; replay.idx=0;
-      goalCooldown=0; acumulador=0; simTick=0;
-      lastTouch=-1; offsidePend=null; passReceiver=null;
+      G.goalCooldown=0; G.acumulador=0; G.simTick=0;
+      G.lastTouch=-1; G.offsidePend=null; G.passReceiver=null;
       S._owner=null; S.possession=0;
       placeKickoff(0); S.phase='kickoff'; S.phaseT=0;
       return hashEstado();
@@ -1814,12 +1623,12 @@ function boot(){
 
     // --- comandos de forzado: convierten la prueba de humo en 90 s deterministas ---
     teleportBall(x, y=BALL_R, z=0){
-      ball.position.set(x,y,z); ball.userData.vel.set(0,0,0); ball.userData.kickLock=0;
+      G.ball.position.set(x,y,z); G.ball.userData.vel.set(0,0,0); G.ball.userData.kickLock=0;
       if(S._owner){ S._owner.hasBall=false; S._owner=null; }
       return [x,y,z];
     },
     setClock(seg){ S.clock=seg; return S.clock; },
-    goal(team=0){ lastTouch=team; scoreGoal(team); return S.score.slice(); },
+    goal(team=0){ G.lastTouch=team; scoreGoal(team); return S.score.slice(); },
     forceSetPiece(tipo='penal', team=0){
       const gz = goalDirZ(team);              // portería que ataca ese equipo
       const pos = {
@@ -1827,7 +1636,7 @@ function boot(){
         corner: [Math.sign(gz)*(HALF_W-0.4), gz],
         banda:  [HALF_W, 0],
         puerta: [0, -gz + Math.sign(gz)*5.5],
-        falta:  [ball.position.x, ball.position.z],
+        falta:  [G.ball.position.x, G.ball.position.z],
       }[tipo];
       if(!pos) return 'tipo inválido: penal|corner|banda|puerta|falta';
       startSetPiece(tipo, team, pos[0], pos[1]);
@@ -1844,8 +1653,8 @@ function boot(){
       const zs = teams[1].map(o=>o.pos.z).sort((a,b)=>b-a);
       atac.pos.z = Math.max(zs[1] + 4, 6);
       const pasador = teams[0].find(p=>p!==atac && !p.isGK);
-      ball.position.set(pasador.pos.x, BALL_R, pasador.pos.z);
-      offsidePend = atac; S._owner = pasador;
+      G.ball.position.set(pasador.pos.x, BALL_R, pasador.pos.z);
+      G.offsidePend = atac; S._owner = pasador;
       callOffside(atac);
       return {adelantado:atac.num, z:+atac.pos.z.toFixed(1)};
     },
@@ -1859,13 +1668,13 @@ function boot(){
       // Mundo COMPLETAMENTE limpio. Reutilizar los jugadores no sirve: arrastran
       // energía gastada y temporizadores, y sendOff() los saca del array, así que
       // tras una roja la siguiente corrida empezaría con menos jugadores.
-      teams.forEach(arr=>arr.forEach(pl=>scene.remove(pl.mesh)));
+      teams.forEach(arr=>arr.forEach(pl=>G.scene.remove(pl.mesh)));
       teams[0]=[]; teams[1]=[]; spawnTeams();
-      S.score=[0,0]; S.clock=0; S.half=1; lastScorer=null;
+      S.score=[0,0]; S.clock=0; S.half=1; G.lastScorer=null;
       cards[0]={a:0,r:0}; cards[1]={a:0,r:0}; S.setPiece=null;
       replay.frames.length=0; replay.acc=0; replay.t=0; replay.idx=0;
-      goalCooldown=0; acumulador=0; simTick=0;
-      lastTouch=-1; offsidePend=null; passReceiver=null;
+      G.goalCooldown=0; G.acumulador=0; G.simTick=0;
+      G.lastTouch=-1; G.offsidePend=null; G.passReceiver=null;
       S._owner=null; S.possession=0; resetEstad();
       placeKickoff(0); S.phase='kickoff'; S.phaseT=0;
       const hashes=[];

@@ -37,18 +37,20 @@ npm run build && npm run preview
 fulbo/
 ├─ index.html                    solo el markup (menú, HUD, torneo, pausa)
 ├─ src/
-│  ├─ main.js                    núcleo del partido, UI y bucle (pendiente de partir)
+│  ├─ main.js                    núcleo del partido y bucle (pendiente de partir)
 │  ├─ config/                    datos puros, sin lógica
-│  │  ├─ teams.js                equipos y nombres inventados
-│  │  ├─ formations.js           4-3-3, 4-4-2, 3-5-2, 5-3-2
-│  │  ├─ field.js                dimensiones del terreno
-│  │  └─ rules.js                dificultad, paso fijo, constantes
-│  ├─ core/rng.js                azar determinista con semilla
+│  │  ├─ teams.js · formations.js · field.js · rules.js
+│  ├─ core/
+│  │  ├─ state.js                S, teams, cards: estado compartido del partido
+│  │  └─ rng.js                  azar determinista con semilla
 │  ├─ render/
 │  │  ├─ textures.js             texturas por canvas
+│  │  ├─ effects.js              confeti y destellos de las gradas
 │  │  └─ scene/                  sky · lights · pitch · goals · stadium
+│  ├─ league/league.js           modo torneo y tabla de posiciones
+│  ├─ ui/badge.js                escudos de equipo
 │  ├─ audio/audio.js             WebAudio procedural
-│  ├─ app/G.js                   contenedor de estado mutable compartido
+│  ├─ app/G.js                   globales mutables (puente temporal a la Fase 4)
 │  └─ styles/base.css
 ├─ public/legacy/index-v0.html   monolito congelado, para comparar A/B
 ├─ tests/golden/                 línea base de determinismo
