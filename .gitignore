@@ -16,3 +16,6 @@ desktop.ini
 
 # Temporales
 *.log
+
+# Build de Vite
+dist/

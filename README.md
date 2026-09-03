@@ -7,25 +7,43 @@ son 100% procedurales.
 
 ## ▶ Cómo jugar
 
-El juego es un único archivo (`index.html`). Como usa módulos ES, **necesita un
-servidor local** (abrirlo con doble clic como `file://` no ejecuta los módulos en
-Chrome). Opciones:
+Necesitás **Node.js 18 o superior**. La primera vez:
 
-**Opción A — Python** (más simple):
 ```bash
-cd fulbo
-python -m http.server 8777
-```
-Luego abre: http://localhost:8777/index.html
-
-**Opción B — Node:**
-```bash
-npx serve .
+npm install
 ```
 
-> Requiere conexión a internet la primera vez para cargar Three.js desde el CDN
-> (unpkg). Si quieres jugar 100% sin conexión, descarga `three.module.js` y ajusta
-> el `importmap` del `<head>` para que apunte al archivo local.
+Y después, para jugar y desarrollar:
+
+```bash
+npm run dev
+```
+
+Abre la dirección que imprime (normalmente http://localhost:5173). Los cambios en
+el código se recargan al instante, sin perder el estado.
+
+Para generar la versión de producción y probarla en local:
+
+```bash
+npm run build && npm run preview
+```
+
+> **Sin dependencia de CDN.** Three.js viene de npm y se empaqueta con el juego,
+> así que funciona sin conexión y no depende de que unpkg esté disponible.
+
+### Estructura
+
+```
+fulbo/
+├─ index.html                    solo el markup (menú, HUD, torneo, pausa)
+├─ src/
+│  ├─ main.js                    el juego completo
+│  └─ styles/base.css            todos los estilos
+├─ public/legacy/index-v0.html   monolito congelado, para comparar A/B
+├─ tests/golden/                 línea base de determinismo
+├─ ARQUITECTURA.md               plan de modularización y camino al online
+├─ vite.config.js · package.json · vercel.json
+```
 
 ## 👥 Multijugador local (hasta 4 personas)
 
@@ -246,5 +264,5 @@ suerte ahora se comprueba en minuto y medio:
 
 ### Comparación A/B
 
-`legacy/index-v0.html` es el monolito congelado **antes** del refactor. Ábrelo en
+`public/legacy/index-v0.html` es el monolito congelado (accesible en `/legacy/index-v0.html`) **antes** del refactor. Ábrelo en
 otra pestaña para comparar sensación y aspecto tras cada fase. No se toca nunca.
