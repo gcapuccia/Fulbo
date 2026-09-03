@@ -14,6 +14,7 @@ import { DT, MAX_PASOS, DIFF, SPRINT_MUL, TOQUE_MAX, CAPTURA, SP_LABEL,
          REPLAY_SEC, REPLAY_HZ, REPLAY_SPEED, COLORES_HUMANO, DISPOSITIVOS }
                                               from './config/rules.js';
 // --- Núcleo ---
+import { Vec3 }                               from './core/math.js';
 import { G }                                  from './app/G.js';
 import { S, teams, names, cards, estad, resetEstad } from './core/state.js';
 import { badgeCSS }                           from './ui/badge.js';
@@ -168,7 +169,7 @@ function buildBall(){
   G.ball = new THREE.Mesh(geo, mat);
   G.ball.castShadow = true;
   G.ball.position.set(0,BALL_R,0);
-  G.ball.userData = { vel:new THREE.Vector3(), spin:new THREE.Vector3(), r:BALL_R };
+  G.ball.userData = { vel:new Vec3(), spin:new Vec3(), r:BALL_R };
   G.scene.add(G.ball);
   // sombra "blob" extra bajo el balón
   const sh = new THREE.Mesh(new THREE.PlaneGeometry(0.55,0.55),
@@ -184,9 +185,9 @@ function buildBall(){
 class Player {
   constructor(team, role, num, kit){
     this.team=team; this.role=role; this.num=num;
-    this.pos = new THREE.Vector3();
-    this.vel = new THREE.Vector3();
-    this.home = new THREE.Vector3(); // posición base según formación
+    this.pos = new Vec3();
+    this.vel = new Vec3();
+    this.home = new Vec3(); // posición base según formación
     this.facing = 0;
     this.runPhase = Math.random()*10;
     this.stunTimer = 0;
@@ -475,7 +476,10 @@ function placeKickoff(kickTeam){
 // ---------------------------------------------------------------------------
 //  UTILIDADES DE JUEGO
 // ---------------------------------------------------------------------------
-const _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
+// Scratch de SIMULACIÓN. Nunca deben compartirse con el render: si la cámara
+// y la IA escriben en el mismo vector temporal, aparece un teletransporte
+// intermitente imposible de reproducir.
+const _v = new Vec3(), _v2 = new Vec3();
 function nearestToBall(ti){
   let best=null, bd=1e9;
   teams[ti].forEach(p=>{ if(p.isGK) return;
@@ -755,7 +759,7 @@ function tryPossession(dt){
     G.lastTouch = owner.team;
     // REGATE: el toque se alarga con la velocidad. Al trotar el balón va pegado al pie;
     // al esprintar se escapa hacia adelante y cuesta más controlarlo.
-    const dir = new THREE.Vector3(Math.sin(owner.facing),0,Math.cos(owner.facing));
+    const dir = new Vec3(Math.sin(owner.facing),0,Math.cos(owner.facing));
     const sp = owner.vel.length();
     // toque SIEMPRE dentro del radio de captura (ver TOQUE_MAX)
     const toque = Math.min(0.50 + sp*0.055 + (owner.sprinting?0.18:0), TOQUE_MAX);
@@ -1070,7 +1074,7 @@ function header(p, aPuerta){
 function slideTackle(p){
   if(p.slideCd>0 || p.stunTimer>0) return;
   p.slideCd=1.3; p.sliding=0.55;
-  const dir=new THREE.Vector3(Math.sin(p.facing),0,Math.cos(p.facing));
+  const dir=new Vec3(Math.sin(p.facing),0,Math.cos(p.facing));
   p.vel.copy(dir).multiplyScalar(baseSpeed(p)*1.55);
   const db=distXZ(p.pos, G.ball.position);
   const victim = (S._owner && S._owner.team!==p.team) ? S._owner : null;
@@ -1135,7 +1139,7 @@ function replayCamera(dt){
   const s = Math.sign(gz);
   const t = replay.t/REPLAY_HZ;
   const ang = -0.5 + t*0.30;
-  G.camera.position.lerp(_v.set(Math.sin(ang)*22, 4.5+t*0.8, gz + s*(14 - t*1.2)), Math.min(1,dt*3));
+  G.camera.position.lerp(_vc.set(Math.sin(ang)*22, 4.5+t*0.8, gz + s*(14 - t*1.2)), Math.min(1,dt*3));
   if(Math.abs(G.camera.fov-34)>0.02){ G.camera.fov=34; G.camera.updateProjectionMatrix(); }
   G.camera.lookAt(G.ball.position.x*0.7, 1.3, G.ball.position.z*0.95);
 }
@@ -1144,6 +1148,7 @@ function replayCamera(dt){
 //  CÁMARA de transmisión
 // ---------------------------------------------------------------------------
 const camTarget = new THREE.Vector3();
+const _vc = new THREE.Vector3(), _vc2 = new THREE.Vector3();   // scratch propio del render
 // En 16:9, encuadrar TODO el ancho del campo (68 m, escorzado) obliga a mostrar
 // ~70 m de largo. Con menos, la pantalla se llena sólo de césped.
 const VIEW_LEN = 70;
@@ -1178,7 +1183,7 @@ function updateCamera(dt){
   if(Math.abs(G.camera.fov-fovDeg)>0.02){ G.camera.fov=fovDeg; G.camera.updateProjectionMatrix(); }
   // CÁMARA LATERAL: en la banda (-X), sigue el juego a lo largo del campo (Z).
   // Así las porterías quedan a izquierda y derecha, y el local ataca hacia la derecha.
-  const desired = _v.set(
+  const desired = _vc.set(
     -CAM_DIST + camTarget.x*0.10,
     CAM_H + Math.abs(camTarget.x)*0.04,
     camTarget.z*0.86
@@ -1187,8 +1192,8 @@ function updateCamera(dt){
   else G.camera.position.lerp(desired, Math.min(1,dt*2.3));
   // Apunta al MEDIO ANGULAR del ancho del campo (no al centro geométrico): así la
   // banda visible queda centrada en el terreno y no se pierde la línea cercana.
-  _v2.set(AIM_X + camTarget.x*0.30, 1.0, camTarget.z*0.92);
-  G.camera.lookAt(_v2);
+  _vc2.set(AIM_X + camTarget.x*0.30, 1.0, camTarget.z*0.92);
+  G.camera.lookAt(_vc2);
 }
 
 // ---------------------------------------------------------------------------
