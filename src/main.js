@@ -5,6 +5,26 @@ import { RenderPass }       from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass }  from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass }       from 'three/addons/postprocessing/OutputPass.js';
 
+// --- Configuración (datos puros, sin lógica) ---
+import { TEAMS, NOMBRES }                     from './config/teams.js';
+import { FORMACIONES, NOMBRES_FORM, FORMATION } from './config/formations.js';
+import { F, HALF_W, HALF_L, GOAL_W, GOAL_H, GOAL_DEPTH, BALL_R, CIRCULO }
+                                              from './config/field.js';
+import { DT, MAX_PASOS, DIFF, SPRINT_MUL, TOQUE_MAX, CAPTURA, SP_LABEL,
+         REPLAY_SEC, REPLAY_HZ, REPLAY_SPEED, COLORES_HUMANO, DISPOSITIVOS }
+                                              from './config/rules.js';
+// --- Núcleo ---
+import { rng, sembrar, suavizado }            from './core/rng.js';
+// --- Audio ---
+import { initAudio, playKick, playWhistle, crowdCheer, ensureAudio } from './audio/audio.js';
+// --- Render ---
+import { softShadowTexture, skinTex, makePitchTexture, makeNetTexture, makeLedTexture }
+                                              from './render/textures.js';
+import { buildSky }                           from './render/scene/sky.js';
+import { buildLights }                        from './render/scene/lights.js';
+import { buildField }                         from './render/scene/pitch.js';
+import { buildStadium }                       from './render/scene/stadium.js';
+
 /* ============================================================================
    FÚLBO — Superliga Estelar
    Motor de fútbol arcade en Three.js — todo procedural, sin assets externos.
@@ -13,57 +33,13 @@ import { OutputPass }       from 'three/addons/postprocessing/OutputPass.js';
 // ---------------------------------------------------------------------------
 //  DATOS: Equipos y jugadores inventados
 // ---------------------------------------------------------------------------
-const TEAMS = [
-  { id:'rel', nombre:'Relámpago FC',    ciudad:'Ciudad Trueno',  c1:'#f9d423', c2:'#0b0b0b', ov:88 },
-  { id:'tor', nombre:'Toros Rojos',     ciudad:'Valle Bravo',    c1:'#d33636', c2:'#ffffff', ov:86 },
-  { id:'oce', nombre:'Océano United',   ciudad:'Puerto Azul',    c1:'#1e6fd6', c2:'#8fd3ff', ov:85 },
-  { id:'ver', nombre:'Verde Valle',     ciudad:'Monteverde',     c1:'#2ecc71', c2:'#0a3d20', ov:83 },
-  { id:'fen', nombre:'Fénix Capital',   ciudad:'Solaria',        c1:'#ff7b1c', c2:'#5b2a86', ov:87 },
-  { id:'som', nombre:'Sombra Nocturna', ciudad:'Nébula',         c1:'#22252b', c2:'#c0c6d0', ov:84 },
-  { id:'hie', nombre:'Hielo Polar',     ciudad:'Aurora Norte',   c1:'#e8f4ff', c2:'#2b8fcd', ov:82 },
-  { id:'vol', nombre:'Volcán CF',       ciudad:'Caldera',        c1:'#e2402b', c2:'#f4a11e', ov:85 },
-].map(t=>({...t, c2:t.c2.replace(' ','')}));
 
-const NOMBRES = ['Marco Vela','Rui Sancho','Iker Bravo','Dídac Roca','Nino Sala','Teo Márquez','Aldo Rey',
-  'Zé Pinto','Luca Ferri','Omar Díaz','Beni Cruz','Pol Serra','Cai Moreno','Dario Lem','Kian Roso','Vito Nardo',
-  'Samu Prat','Enzo Gil','Bruno Sanz','Nael Cid','Toni Vera','Rafa Osu','Malik Ndo','Yago Peña'];
 
 // Formaciones: coordenadas relativas (x lateral -1..1, z profundidad 0 propia .. 1 rival)
-const FORMACIONES = {
-  '4-3-3': [
-    {r:'POR', x:0.0,  z:0.03},
-    {r:'DEF', x:-0.62,z:0.20},{r:'DEF', x:-0.22,z:0.16},{r:'DEF', x:0.22,z:0.16},{r:'DEF', x:0.62,z:0.20},
-    {r:'MED', x:-0.40,z:0.42},{r:'MED', x:0.0,  z:0.38},{r:'MED', x:0.40,z:0.42},
-    {r:'DEL', x:-0.55,z:0.66},{r:'DEL', x:0.0,  z:0.72},{r:'DEL', x:0.55,z:0.66},
-  ],
-  '4-4-2': [
-    {r:'POR', x:0.0,  z:0.03},
-    {r:'DEF', x:-0.62,z:0.19},{r:'DEF', x:-0.22,z:0.15},{r:'DEF', x:0.22,z:0.15},{r:'DEF', x:0.62,z:0.19},
-    {r:'MED', x:-0.62,z:0.44},{r:'MED', x:-0.20,z:0.40},{r:'MED', x:0.20,z:0.40},{r:'MED', x:0.62,z:0.44},
-    {r:'DEL', x:-0.22,z:0.70},{r:'DEL', x:0.22,z:0.70},
-  ],
-  '3-5-2': [
-    {r:'POR', x:0.0,  z:0.03},
-    {r:'DEF', x:-0.38,z:0.17},{r:'DEF', x:0.0,  z:0.14},{r:'DEF', x:0.38,z:0.17},
-    {r:'MED', x:-0.72,z:0.46},{r:'MED', x:-0.30,z:0.40},{r:'MED', x:0.0,z:0.34},
-    {r:'MED', x:0.30,z:0.40},{r:'MED', x:0.72,z:0.46},
-    {r:'DEL', x:-0.22,z:0.72},{r:'DEL', x:0.22,z:0.72},
-  ],
-  '5-3-2': [
-    {r:'POR', x:0.0,  z:0.03},
-    {r:'DEF', x:-0.75,z:0.20},{r:'DEF', x:-0.38,z:0.14},{r:'DEF', x:0.0,z:0.12},
-    {r:'DEF', x:0.38,z:0.14},{r:'DEF', x:0.75,z:0.20},
-    {r:'MED', x:-0.40,z:0.42},{r:'MED', x:0.0,  z:0.38},{r:'MED', x:0.40,z:0.42},
-    {r:'DEL', x:-0.22,z:0.68},{r:'DEL', x:0.22,z:0.68},
-  ],
-};
-const NOMBRES_FORM = Object.keys(FORMACIONES);
-const FORMATION = FORMACIONES['4-3-3'];   // por defecto
 
 // ---------------------------------------------------------------------------
 //  DIMENSIONES DEL CAMPO
 // ---------------------------------------------------------------------------
-const F = { W:68, L:105, LINE:0.12 };  // ancho, largo (metros escala)
 
 // ---------------------------------------------------------------------------
 //  DETERMINISMO — RNG sembrado, paso fijo y hash de estado (Fase 1)
@@ -71,29 +47,15 @@ const F = { W:68, L:105, LINE:0.12 };  // ancho, largo (metros escala)
 // Sólo el azar que AFECTA A LAS REGLAS pasa por rng(). El azar cosmético
 // (piel, pelo, césped, público, confeti, estrellas) sigue usando Math.random():
 // esa separación es exactamente la frontera core/render.
-const DT = 1/60;              // paso fijo de simulación
-const MAX_PASOS = 5;          // tope por frame: evita la espiral de la muerte
-let _semilla = 12345;
 
-function mulberry32(a){
-  return function(){
-    a |= 0; a = a + 0x6D2B79F5 | 0;
-    let t = Math.imul(a ^ a >>> 15, 1 | a);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
-let rng = mulberry32(_semilla);
 
 // Contadores para afinar el balance con datos, no con impresiones.
 const estad = { tiros:0, cabezazos:0, despejesPortero:0, goles:0, ticksConDueno:0 };
 function resetEstad(){ for(const k in estad) estad[k]=0; }
-function sembrar(n){ _semilla = n>>>0; rng = mulberry32(_semilla); return _semilla; }
 
 // Suavizado independiente del dt: k es la fracción que se aplicaría a 60 Hz.
 // El lerp(dt*k) de toda la vida NO es dt-correcto: la aceleración efectiva
 // cambia con los fotogramas por segundo.
-function suavizado(k, dt){ return 1 - Math.pow(1-k, dt*60); }
 
 // Hash del estado autoritativo. Cuantizado a milésimas para no acusar ruido
 // de coma flotante, pero sí cualquier divergencia real de simulación.
@@ -114,20 +76,6 @@ function hashEstado(){
 }
 
 // sombra suave reutilizable (degradado radial) para jugadores y balón
-let _shadowTex=null;
-function softShadowTexture(){
-  if(_shadowTex) return _shadowTex;
-  const N=128, c=document.createElement('canvas'); c.width=c.height=N;
-  const g=c.getContext('2d');
-  const gr=g.createRadialGradient(N/2,N/2,0,N/2,N/2,N/2);
-  gr.addColorStop(0,'rgba(0,0,0,0.75)'); gr.addColorStop(0.55,'rgba(0,0,0,0.35)');
-  gr.addColorStop(1,'rgba(0,0,0,0)');
-  g.fillStyle=gr; g.fillRect(0,0,N,N);
-  _shadowTex=new THREE.CanvasTexture(c);
-  return _shadowTex;
-}
-const HALF_W = F.W/2, HALF_L = F.L/2;
-const GOAL_W = 7.32, GOAL_H = 2.44, GOAL_DEPTH = 2.0;
 
 // ---------------------------------------------------------------------------
 //  ESTADO GLOBAL
@@ -145,13 +93,11 @@ const S = {
   possession:0,  // equipo con el balón (0 local / 1 visita) o -1
   controlled:null,
 };
-const DIFF = { facil:{ai:0.72,react:0.55}, normal:{ai:0.86,react:0.75}, dificil:{ai:1.0,react:0.95} };
 
 // ---------------------------------------------------------------------------
 //  THREE — Renderer, escena, cámara
 // ---------------------------------------------------------------------------
 let renderer, scene, camera, clock, composer, bloomPass;
-const groups = {};   // subgrupos de escena
 
 function initThree(){
   renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
@@ -197,312 +143,28 @@ function initThree(){
 // ---------------------------------------------------------------------------
 //  LUCES
 // ---------------------------------------------------------------------------
-function buildSky(){
-  const geo = new THREE.SphereGeometry(420, 32, 16);
-  const c=document.createElement('canvas'); c.width=16; c.height=256; const g=c.getContext('2d');
-  const grd=g.createLinearGradient(0,0,0,256);
-  grd.addColorStop(0,'#050c1a'); grd.addColorStop(0.55,'#0e2947'); grd.addColorStop(0.8,'#1c4a6e'); grd.addColorStop(1,'#2a5f82');
-  g.fillStyle=grd; g.fillRect(0,0,16,256);
-  const tex=new THREE.CanvasTexture(c); tex.colorSpace=THREE.SRGBColorSpace;
-  scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({map:tex, side:THREE.BackSide, fog:false})));
-  // estrellas
-  const N=700, pos=new Float32Array(N*3);
-  for(let i=0;i<N;i++){ const th=Math.random()*Math.PI*2, ph=Math.random()*0.55+0.02, r=400;
-    pos[i*3]=r*Math.cos(th)*Math.cos(ph); pos[i*3+1]=r*Math.sin(ph)+30; pos[i*3+2]=r*Math.sin(th)*Math.cos(ph); }
-  const sg=new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.BufferAttribute(pos,3));
-  scene.add(new THREE.Points(sg, new THREE.PointsMaterial({color:'#eaf2ff', size:1.5, fog:false, transparent:true, opacity:.75})));
-}
 
-function buildLights(){
-  // Luz más neutra: antes el tinte azul/cálido falseaba los colores de las camisetas
-  // (el amarillo se veía naranja y el negro, azulado).
-  const hemi = new THREE.HemisphereLight('#dfe9f5', '#41563f', 0.55);
-  scene.add(hemi);
-  scene.add(new THREE.AmbientLight('#ffffff', 0.22));
 
-  const sun = new THREE.DirectionalLight('#fffaf2', 1.25);
-  sun.position.set(-60, 90, 40);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(S.quality==='alta'?2048:1024, S.quality==='alta'?2048:1024);
-  const d = 80;
-  sun.shadow.camera.left=-d; sun.shadow.camera.right=d;
-  sun.shadow.camera.top=d; sun.shadow.camera.bottom=-d;
-  sun.shadow.camera.near=10; sun.shadow.camera.far=260;
-  sun.shadow.bias = -0.0004;
-  scene.add(sun);
-
-  // Torres de luz (4 esquinas) — sólo estético + un poco de relleno
-  const cornerX = HALF_W+10, cornerZ = HALF_L+8;
-  [[-cornerX,-cornerZ],[cornerX,-cornerZ],[-cornerX,cornerZ],[cornerX,cornerZ]].forEach(([x,z])=>{
-    const fill = new THREE.PointLight('#dfeaff', 0.35, 220, 2.0);
-    fill.position.set(x, 34, z);
-    scene.add(fill);
-    scene.add(buildFloodTower(x,z));
-  });
-}
-
-function buildFloodTower(x,z){
-  const g = new THREE.Group();
-  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.35,0.5,32,10),
-    new THREE.MeshStandardMaterial({color:'#3a4655',metalness:.6,roughness:.5}));
-  mast.position.y=16; mast.castShadow=true; g.add(mast);
-  const rig = new THREE.Mesh(new THREE.BoxGeometry(7,3.4,1.2),
-    new THREE.MeshStandardMaterial({color:'#2b333d',metalness:.5,roughness:.6}));
-  rig.position.set(0,33,0); g.add(rig);
-  const lampGeo = new THREE.BoxGeometry(1.5,1.4,0.4);
-  const lampMat = new THREE.MeshStandardMaterial({color:'#fff8e6',emissive:'#fff2c8',emissiveIntensity:6.0});
-  for(let i=-2;i<=2;i++)for(let j=-1;j<=1;j++){
-    const l=new THREE.Mesh(lampGeo,lampMat); l.position.set(i*1.3,33+j*1.0,0.7); g.add(l);
-  }
-  g.position.set(x,0,z);
-  g.lookAt(0,20,0);
-  return g;
-}
 
 // ---------------------------------------------------------------------------
 //  CÉSPED con textura procedural (líneas + franjas de corte)
 // ---------------------------------------------------------------------------
-function makePitchTexture(){
-  // Lienzo PROPORCIONAL al plano (84 x 121 m) y dibujado en metros: así el
-  // círculo central es un círculo de verdad y no una elipse.
-  const W=F.W+16, L=F.L+16, k=16;                 // k = píxeles por metro
-  const c=document.createElement('canvas');
-  c.width=Math.round(W*k); c.height=Math.round(L*k);
-  const g=c.getContext('2d');
-  g.save();
-  g.translate(c.width/2, c.height/2);
-  g.scale(k,k);                                    // a partir de aquí, 1 unidad = 1 metro
 
-  // --- franjas de corte (perpendiculares al largo) ---
-  const n=20, sw=L/n;
-  for(let i=0;i<n;i++){
-    g.fillStyle = i%2 ? '#33a446' : '#2b8f3a';
-    g.fillRect(-W/2, -L/2+i*sw, W, sw+0.03);
-  }
-  // --- vetas de rodillo dentro de cada franja ---
-  g.globalAlpha=0.05;
-  for(let i=0;i<n;i++){
-    g.fillStyle = i%2 ? '#000' : '#fff';
-    for(let j=0;j<7;j++) g.fillRect(-W/2, -L/2+i*sw+j*(sw/7), W, sw/16);
-  }
-  g.globalAlpha=1;
-  // --- ruido de hierba ---
-  for(let i=0;i<26000;i++){
-    g.globalAlpha=Math.random()*0.07;
-    g.fillStyle=Math.random()<0.5?'#0b3d18':'#7fe08a';
-    g.fillRect((Math.random()-0.5)*W, (Math.random()-0.5)*L, 0.14, 0.30);
-  }
-  // --- desgaste frente a las porterías y en el centro ---
-  g.globalAlpha=1;
-  for(const [cx,cz,r] of [[0,HALF_L-6,9],[0,-HALF_L+6,9],[0,0,7]]){
-    const gr=g.createRadialGradient(cx,cz,0,cx,cz,r);
-    gr.addColorStop(0,'rgba(150,120,70,0.13)'); gr.addColorStop(1,'rgba(150,120,70,0)');
-    g.fillStyle=gr; g.beginPath(); g.arc(cx,cz,r,0,Math.PI*2); g.fill();
-  }
-
-  // --- LÍNEAS REGLAMENTARIAS (todo en metros) ---
-  g.strokeStyle='rgba(255,255,255,0.94)'; g.fillStyle='rgba(255,255,255,0.94)';
-  g.lineWidth=0.12; g.lineJoin='miter';
-  g.strokeRect(-HALF_W,-HALF_L,F.W,F.L);                       // perímetro
-  g.beginPath(); g.moveTo(-HALF_W,0); g.lineTo(HALF_W,0); g.stroke();   // línea media
-  g.beginPath(); g.arc(0,0,9.15,0,Math.PI*2); g.stroke();      // círculo central (¡redondo!)
-  g.beginPath(); g.arc(0,0,0.16,0,Math.PI*2); g.fill();        // punto central
-
-  const ARCO=Math.acos(5.5/9.15);                              // semiángulo del arco del área
-  for(const s of [1,-1]){
-    const zc=s*HALF_L;
-    g.strokeRect(-20.16, s>0? zc-16.5 : zc, 40.32, 16.5);      // área grande
-    g.strokeRect(-9.16,  s>0? zc-5.5  : zc, 18.32, 5.5);       // área chica
-    const pz = zc - s*11;                                       // punto de penal
-    g.beginPath(); g.arc(0,pz,0.16,0,Math.PI*2); g.fill();
-    g.beginPath();                                              // arco del área
-    const base = s>0 ? 1.5*Math.PI : 0.5*Math.PI;
-    g.arc(0,pz,9.15, base-ARCO, base+ARCO); g.stroke();
-  }
-  // arcos de córner (recortados al terreno)
-  g.save();
-  g.beginPath(); g.rect(-HALF_W,-HALF_L,F.W,F.L); g.clip();
-  for(const sx of [-1,1]) for(const sz of [-1,1]){
-    g.beginPath(); g.arc(sx*HALF_W, sz*HALF_L, 1, 0, Math.PI*2); g.stroke();
-  }
-  g.restore();
-  g.restore();
-
-  const tex=new THREE.CanvasTexture(c);
-  tex.anisotropy=16; tex.colorSpace=THREE.SRGBColorSpace;
-  return tex;
-}
-
-function buildField(){
-  const g = new THREE.Group();
-  // suelo amplio del recinto: evita el "vacío" negro fuera del césped
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(300, 360),
-    new THREE.MeshStandardMaterial({color:'#20452c', roughness:1}));
-  ground.rotation.x=-Math.PI/2; ground.position.y=-0.05;
-  ground.receiveShadow=false;   // sin sombras: evita que la tribuna lo vuelva negro
-  g.add(ground);
-  const geo = new THREE.PlaneGeometry(F.W+16, F.L+16, 1, 1);
-  const mat = new THREE.MeshStandardMaterial({ map:makePitchTexture(), roughness:0.92, metalness:0.0 });
-  const pitch = new THREE.Mesh(geo, mat);
-  pitch.rotation.x = -Math.PI/2; pitch.receiveShadow = true;
-  g.add(pitch);
-  // borde publicitario / foso
-  const surround = new THREE.Mesh(new THREE.RingGeometry(0,1,4),
-    new THREE.MeshStandardMaterial({color:'#0c2a14'}));
-  // arcos y vallas LED
-  g.add(buildGoal(1), buildGoal(-1), buildLedBoards());
-  scene.add(g); groups.field = g;
-}
 
 // malla de red: líneas blancas sobre fondo transparente (sirve de map y alphaMap)
-function makeNetTexture(){
-  const N=64, c=document.createElement('canvas'); c.width=c.height=N;
-  const g=c.getContext('2d');
-  g.clearRect(0,0,N,N);
-  g.strokeStyle='#ffffff'; g.lineWidth=3.2;
-  g.beginPath();
-  g.moveTo(0,0); g.lineTo(N,0); g.moveTo(0,0); g.lineTo(0,N);   // celda de rejilla
-  g.stroke();
-  const t=new THREE.CanvasTexture(c);
-  t.wrapS=t.wrapT=THREE.RepeatWrapping;
-  return t;
-}
 
 // vallas LED publicitarias alrededor del campo
-function makeLedTexture(c1, c2, texto){
-  const w=1024,h=96, c=document.createElement('canvas'); c.width=w; c.height=h;
-  const g=c.getContext('2d');
-  const grd=g.createLinearGradient(0,0,w,0);
-  grd.addColorStop(0,c1); grd.addColorStop(0.5,c2); grd.addColorStop(1,c1);
-  g.fillStyle=grd; g.fillRect(0,0,w,h);
-  g.fillStyle='rgba(255,255,255,0.92)';
-  g.font='bold 52px Arial'; g.textAlign='center'; g.textBaseline='middle';
-  for(let i=0;i<3;i++) g.fillText(texto, w*(i+0.5)/3, h/2);
-  // rejilla de píxeles LED
-  g.globalAlpha=0.16; g.fillStyle='#000';
-  for(let x=0;x<w;x+=4) g.fillRect(x,0,2,h);
-  for(let y=0;y<h;y+=4) g.fillRect(0,y,w,2);
-  const t=new THREE.CanvasTexture(c);
-  t.wrapS=THREE.RepeatWrapping; t.colorSpace=THREE.SRGBColorSpace;
-  return t;
-}
-function buildLedBoards(){
-  const g=new THREE.Group(), H=1.15;
-  const mk=(len, tex, rep)=>{
-    tex.repeat.set(rep,1);
-    const m=new THREE.MeshStandardMaterial({map:tex, emissive:'#ffffff', emissiveMap:tex,
-      emissiveIntensity:0.55, roughness:0.55, metalness:0.05});
-    return new THREE.Mesh(new THREE.BoxGeometry(len,H,0.22), m);
-  };
-  // bandas laterales (a lo largo del campo)
-  for(const sx of [-1,1]){
-    const b=mk(F.L+8, makeLedTexture('#0b2a5e','#123f8a','FÚLBO · SUPERLIGA ESTELAR'), 18);
-    b.rotation.y=Math.PI/2; b.position.set(sx*(HALF_W+3.2), H/2, 0); g.add(b);
-  }
-  // detrás de cada arco
-  for(const sz of [-1,1]){
-    const b=mk(F.W+8, makeLedTexture('#5a1030','#8c1b46','COPA ESTELAR'), 12);
-    b.position.set(0, H/2, sz*(HALF_L+3.2)); g.add(b);
-  }
-  return g;
-}
 
-function buildGoal(side){
-  const g = new THREE.Group();
-  const postMat = new THREE.MeshStandardMaterial({color:'#f4f7ff',metalness:.2,roughness:.35,emissive:'#20304a',emissiveIntensity:.1});
-  const r=0.09;
-  const post=(x)=>{const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,GOAL_H,12),postMat);m.position.set(x,GOAL_H/2,0);m.castShadow=true;return m;};
-  const bar=new THREE.Mesh(new THREE.CylinderGeometry(r,r,GOAL_W,12),postMat);
-  bar.rotation.z=Math.PI/2; bar.position.set(0,GOAL_H,0); bar.castShadow=true;
-  g.add(post(-GOAL_W/2),post(GOAL_W/2),bar);
-  // red con malla real (textura con alfa)
-  const mkNet=(w,h,rep)=>{
-    const t=makeNetTexture(); t.repeat.set(w*rep, h*rep);
-    return new THREE.MeshStandardMaterial({map:t, alphaMap:t, transparent:true, opacity:0.9,
-      side:THREE.DoubleSide, roughness:1, depthWrite:false, color:'#eef3ff'});
-  };
-  const back = new THREE.Mesh(new THREE.PlaneGeometry(GOAL_W,GOAL_H), mkNet(GOAL_W,GOAL_H,2.2));
-  back.position.set(0,GOAL_H/2,-GOAL_DEPTH*side); g.add(back);
-  const top = new THREE.Mesh(new THREE.PlaneGeometry(GOAL_W,GOAL_DEPTH), mkNet(GOAL_W,GOAL_DEPTH,2.2));
-  top.rotation.x=Math.PI/2; top.position.set(0,GOAL_H,-GOAL_DEPTH*side/2); g.add(top);
-  [-1,1].forEach(sx=>{
-    const sd=new THREE.Mesh(new THREE.PlaneGeometry(GOAL_DEPTH,GOAL_H), mkNet(GOAL_DEPTH,GOAL_H,2.2));
-    sd.rotation.y=Math.PI/2; sd.position.set(sx*GOAL_W/2,GOAL_H/2,-GOAL_DEPTH*side/2); g.add(sd);});
-  g.position.set(0,0,side*HALF_L);
-  return g;
-}
 
 // ---------------------------------------------------------------------------
 //  ESTADIO — gradas con multitud (instancias) + techo
 // ---------------------------------------------------------------------------
-function buildStadium(){
-  const g = new THREE.Group();
-  const standMat = new THREE.MeshStandardMaterial({color:'#2c3a4f',roughness:.9});
-  const roofMat = new THREE.MeshStandardMaterial({color:'#1a222e',roughness:.55,metalness:.35,side:THREE.DoubleSide});
 
-  // Cuatro tribunas como gradas inclinadas
-  const buildStand=(len, depth, pos, rotY)=>{
-    const s = new THREE.Group();
-    const base = new THREE.Mesh(new THREE.BoxGeometry(len, 1, depth), standMat);
-    base.position.y=0.5; base.receiveShadow=true; s.add(base);
-    const tiers=8;
-    for(let i=0;i<tiers;i++){
-      const t = new THREE.Mesh(new THREE.BoxGeometry(len, 0.9, depth/tiers),
-        new THREE.MeshStandardMaterial({color: i%2?'#33425a':'#2a3750',roughness:.9}));
-      t.position.set(0, 1+i*1.05, -depth/2 + (i+0.5)*(depth/tiers));
-      t.position.y = 1 + i*1.15; t.position.z = -depth/2 + (i+0.5)*(depth/tiers);
-      t.castShadow=false; s.add(t);
-    }
-    // techo
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(len+4, 0.4, depth+3), roofMat);
-    roof.position.set(0, tiers*1.15+3.5, 1.5); roof.rotation.x=-0.12; s.add(roof);
-    // multitud instanciada
-    s.add(buildCrowd(len, depth, tiers));
-    s.position.copy(pos); s.rotation.y = rotY;
-    return s;
-  };
-  const gap=8;
-  g.add(buildStand(F.W+30, 26, new THREE.Vector3(0,0,-(HALF_L+gap+13)), 0));
-  g.add(buildStand(F.W+30, 26, new THREE.Vector3(0,0, (HALF_L+gap+13)), Math.PI));
-  // laterales más alejadas: dejan libre el pasillo donde vive la cámara de TV
-  g.add(buildStand(F.L+20, 24, new THREE.Vector3(-(HALF_W+gap+30),0,0), Math.PI/2));
-  g.add(buildStand(F.L+20, 24, new THREE.Vector3( (HALF_W+gap+30),0,0), -Math.PI/2));
-
-  scene.add(g); groups.stadium = g;
-}
-
-function buildCrowd(len, depth, tiers){
-  const cols = Math.floor(len/0.62), rows = tiers;   // gradas más llenas
-  const total = cols*rows;
-  const geo = new THREE.BoxGeometry(0.42,0.7,0.42);
-  const mat = new THREE.MeshBasicMaterial({vertexColors:true});
-  const inst = new THREE.InstancedMesh(geo, mat, total);
-  inst.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(total*3),3);
-  const pal = ['#e74c3c','#3498db','#f1c40f','#ecf0f1','#2ecc71','#e67e22','#ffffff','#9b59b6','#1abc9c'];
-  const dummy = new THREE.Object3D(); const col = new THREE.Color();
-  let idx=0;
-  crowdMeshes.push(inst);
-  for(let r=0;r<rows;r++)for(let cItr=0;cItr<cols;cItr++){
-    const x = -len/2 + (cItr+0.5)*(len/cols) + (Math.random()-0.5)*0.3;
-    const y = 1.4 + r*1.15;
-    const z = -depth/2 + (r+0.6)*(depth/rows);
-    dummy.position.set(x,y,z);
-    dummy.scale.setScalar(0.8+Math.random()*0.5);
-    dummy.updateMatrix(); inst.setMatrixAt(idx, dummy.matrix);
-    col.set(pal[(Math.random()*pal.length)|0]); inst.setColorAt(idx, col);
-    inst.userData; idx++;
-  }
-  inst.instanceMatrix.needsUpdate=true;
-  inst.userData.baseY = 1.4;
-  return inst;
-}
-const crowdMeshes = [];
 
 // ---------------------------------------------------------------------------
 //  BALÓN
 // ---------------------------------------------------------------------------
 let ball;
-const BALL_R = 0.16;   // radio real ≈0.11 m; algo mayor para que se vea bien en juego
 function buildBall(){
   const geo = new THREE.SphereGeometry(BALL_R, 22, 16);
   // textura tipo panel
@@ -528,15 +190,6 @@ function buildBall(){
 // ---------------------------------------------------------------------------
 //  JUGADORES — figura estilizada con rig procedural
 // ---------------------------------------------------------------------------
-function skinTex(c1,c2,num){
-  const c=document.createElement('canvas'); c.width=c.height=128; const g=c.getContext('2d');
-  g.fillStyle=c1; g.fillRect(0,0,128,128);
-  g.fillStyle=c2; g.fillRect(0,0,128,20); // hombros
-  g.fillStyle='rgba(255,255,255,.15)'; g.fillRect(54,0,20,128); // franja central
-  g.fillStyle=c2; g.font='bold 54px Arial'; g.textAlign='center'; g.textBaseline='middle';
-  g.fillText(num, 64, 74);
-  const t=new THREE.CanvasTexture(c); t.colorSpace=THREE.SRGBColorSpace; return t;
-}
 
 class Player {
   constructor(team, role, num, kit){
@@ -773,7 +426,6 @@ function homePos(ti, f, out){
   return out;
 }
 
-const CIRCULO = 9.15;          // radio del círculo central
 
 // separa jugadores que hayan quedado encimados
 function separarJugadores(minDist){
@@ -845,13 +497,6 @@ function nearestToBall(ti){
 // ---------------------------------------------------------------------------
 //  JUGADORES HUMANOS (multijugador local: teclado y mandos)
 // ---------------------------------------------------------------------------
-const COLORES_HUMANO = ['#ffd23f','#4fc3f7','#7bed7b','#ff8a65'];
-const DISPOSITIVOS = [
-  {id:'teclado1', nombre:'Teclado 1 · WASD'},
-  {id:'teclado2', nombre:'Teclado 2 · Flechas'},
-  {id:'pad0', nombre:'Mando 1'}, {id:'pad1', nombre:'Mando 2'},
-  {id:'pad2', nombre:'Mando 3'}, {id:'pad3', nombre:'Mando 4'},
-];
 
 function refreshRings(){
   for(const arr of teams) for(const p of arr){
@@ -964,8 +609,6 @@ function handleGoalCheck(){
 // ---------------------------------------------------------------------------
 //  JUGADAS A BALÓN PARADO (banda / córner / saque de puerta / falta / penal)
 // ---------------------------------------------------------------------------
-const SP_LABEL = { banda:'SAQUE DE BANDA', corner:'CÓRNER', puerta:'SAQUE DE PUERTA',
-                   falta:'TIRO LIBRE', penal:'PENAL' };
 function teamName(t){ return t===0?S.homeTeam.nombre:S.awayTeam.nombre; }
 
 function startSetPiece(type, team, x, z){
@@ -1111,8 +754,6 @@ function distXZ(a,b){ return Math.hypot(a.x-b.x, a.z-b.z); }
 
 // Conducción: el toque nunca debe superar el radio de captura, o el balón
 // se escapa del control y sale despedido.
-const TOQUE_MAX = 1.05;
-const CAPTURA   = 1.70;   // > TOQUE_MAX con margen
 
 function tryPossession(dt){
   // ¿quién toca el balón?
@@ -1313,7 +954,6 @@ function shouldChase(p){
 
 // Velocidades realistas (m/s): correr ~6.5-7, sprint ~9 (≈100 m en 11 s).
 // Cruzar el campo (105 m) cuesta unos 12 s a tope, no 1 segundo.
-const SPRINT_MUL = 1.3;
 function baseSpeed(p){
   const rSpeed = p.role==='DEL'?7.0 : p.role==='MED'?6.8 : p.role==='DEF'?6.6 : 6.2;
   // el cansancio también afecta a la IA
@@ -1466,7 +1106,6 @@ function slideTackle(p){
 // ---------------------------------------------------------------------------
 //  REPETICIÓN DE GOL (buffer circular + cámara lenta)
 // ---------------------------------------------------------------------------
-const REPLAY_SEC = 4.5, REPLAY_HZ = 30, REPLAY_SPEED = 0.45;  // 0.45x = cámara lenta
 const replay = { frames:[], max:Math.round(REPLAY_SEC*REPLAY_HZ), acc:0, idx:0, t:0 };
 
 function recordReplay(dt){
@@ -1781,42 +1420,6 @@ function buildFlashes(){
 // ---------------------------------------------------------------------------
 //  AUDIO procedural (WebAudio) — silbato, patada, ambiente
 // ---------------------------------------------------------------------------
-let actx=null, crowdGain=null;
-function initAudio(){
-  try{
-    actx=new (window.AudioContext||window.webkitAudioContext)();
-    // ambiente de multitud: ruido rosa filtrado suave
-    const buf=actx.createBuffer(1, actx.sampleRate*2, actx.sampleRate);
-    const d=buf.getChannelData(0); let last=0;
-    for(let i=0;i<d.length;i++){ const w=Math.random()*2-1; last=(last+0.02*w)/1.02; d[i]=last*3; }
-    const src=actx.createBufferSource(); src.buffer=buf; src.loop=true;
-    const flt=actx.createBiquadFilter(); flt.type='bandpass'; flt.frequency.value=650; flt.Q.value=0.6;
-    crowdGain=actx.createGain(); crowdGain.gain.value=0.05;
-    src.connect(flt).connect(crowdGain).connect(actx.destination); src.start();
-  }catch(e){}
-}
-function playKick(){ if(!actx) return;
-  const o=actx.createOscillator(),g=actx.createGain();
-  o.type='sine'; o.frequency.setValueAtTime(180,actx.currentTime);
-  o.frequency.exponentialRampToValueAtTime(60,actx.currentTime+0.08);
-  g.gain.setValueAtTime(0.25,actx.currentTime); g.gain.exponentialRampToValueAtTime(0.001,actx.currentTime+0.12);
-  o.connect(g).connect(actx.destination); o.start(); o.stop(actx.currentTime+0.13);
-}
-function playWhistle(n){ if(!actx) return;
-  for(let i=0;i<n;i++){ const t=actx.currentTime+i*0.18;
-    const o=actx.createOscillator(),g=actx.createGain();
-    o.type='square'; o.frequency.setValueAtTime(2100,t);
-    g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.12,t+0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001,t+0.14);
-    o.connect(g).connect(actx.destination); o.start(t); o.stop(t+0.15);
-  }
-}
-function crowdCheer(){ if(!crowdGain) return;
-  crowdGain.gain.cancelScheduledValues(actx.currentTime);
-  crowdGain.gain.setValueAtTime(crowdGain.gain.value, actx.currentTime);
-  crowdGain.gain.linearRampToValueAtTime(0.28, actx.currentTime+0.1);
-  crowdGain.gain.linearRampToValueAtTime(0.05, actx.currentTime+3.2);
-}
 
 // ---------------------------------------------------------------------------
 //  MINIMAPA
@@ -2139,7 +1742,7 @@ function setupHUDTeams(){
 }
 
 function startMatch(){
-  if(!actx) initAudio(); else if(actx.state==='suspended') actx.resume();
+  ensureAudio();
   // limpiar equipos previos
   teams.forEach(arr=>arr.forEach(p=>scene.remove(p.mesh))); teams[0]=[]; teams[1]=[];
   spawnTeams();
@@ -2172,10 +1775,10 @@ document.getElementById('toMenu').onclick=()=>{
 // ---------------------------------------------------------------------------
 function boot(){
   initThree();
-  buildSky();
-  buildLights();
-  buildField();
-  buildStadium();
+  buildSky(scene);
+  buildLights(scene, S.quality);
+  buildField(scene);
+  buildStadium(scene);
   buildFlashes();
   buildBall();
   buildConfetti();
@@ -2283,4 +1886,4 @@ function boot(){
 boot();
 
 // resumir audio en primer gesto
-addEventListener('pointerdown', ()=>{ if(actx&&actx.state==='suspended') actx.resume(); }, {once:true});
+addEventListener('pointerdown', ()=>ensureAudio(), {once:true});

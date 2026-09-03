@@ -37,12 +37,22 @@ npm run build && npm run preview
 fulbo/
 ├─ index.html                    solo el markup (menú, HUD, torneo, pausa)
 ├─ src/
-│  ├─ main.js                    el juego completo
-│  └─ styles/base.css            todos los estilos
+│  ├─ main.js                    núcleo del partido, UI y bucle (pendiente de partir)
+│  ├─ config/                    datos puros, sin lógica
+│  │  ├─ teams.js                equipos y nombres inventados
+│  │  ├─ formations.js           4-3-3, 4-4-2, 3-5-2, 5-3-2
+│  │  ├─ field.js                dimensiones del terreno
+│  │  └─ rules.js                dificultad, paso fijo, constantes
+│  ├─ core/rng.js                azar determinista con semilla
+│  ├─ render/
+│  │  ├─ textures.js             texturas por canvas
+│  │  └─ scene/                  sky · lights · pitch · goals · stadium
+│  ├─ audio/audio.js             WebAudio procedural
+│  ├─ app/G.js                   contenedor de estado mutable compartido
+│  └─ styles/base.css
 ├─ public/legacy/index-v0.html   monolito congelado, para comparar A/B
 ├─ tests/golden/                 línea base de determinismo
 ├─ ARQUITECTURA.md               plan de modularización y camino al online
-├─ vite.config.js · package.json · vercel.json
 ```
 
 ## 👥 Multijugador local (hasta 4 personas)
