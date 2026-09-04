@@ -15,6 +15,9 @@ import { DT, MAX_PASOS, DIFF, SPRINT_MUL, TOQUE_MAX, CAPTURA, SP_LABEL,
                                               from './config/rules.js';
 // --- Núcleo ---
 import { Vec3 }                               from './core/math.js';
+import { binds, guardarBinds, restaurarBinds, nombreTecla, ACCIONES }
+                                              from './config/binds.js';
+import { perfil, setApodo, contarPartido }    from './app/perfil.js';
 import { G }                                  from './app/G.js';
 import { S, teams, names, cards, estad, resetEstad, bola } from './core/state.js';
 import { badgeCSS }                           from './ui/badge.js';
@@ -213,6 +216,7 @@ class Player {
     // torso: hombros anchos que se estrechan en la cintura
     const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.40,0.70,5,12), shirtMat);
     torso.position.y=1.66; torso.scale.set(1.12,1,0.72); torso.castShadow=true; g.add(torso);
+    this.torso = torso;
     const cadera = new THREE.Mesh(new THREE.CapsuleGeometry(0.33,0.20,4,10), shortMat);
     cadera.position.y=1.20; cadera.scale.set(1.1,1,0.78); cadera.castShadow=true; g.add(cadera);
     // cuello
@@ -265,11 +269,19 @@ class Player {
     this.lLeg.position.set(-0.2,1.15,0); this.rLeg.position.set(0.2,1.15,0);
     g.add(this.lLeg,this.rLeg);
 
+    // El CUERPO va en su propio subgrupo. Antes las poses de barrida y de
+    // caída rotaban el grupo entero, así que la sombra y el marcador se
+    // ponían de canto y el jugador parecía hundirse en el césped.
+    const cuerpo = new THREE.Group();
+    while(g.children.length) cuerpo.add(g.children[0]);
+    g.add(cuerpo);
+    this.cuerpo = cuerpo;
+
     // sombra blob
     const blob=new THREE.Mesh(new THREE.PlaneGeometry(1.5,1.5),
       new THREE.MeshBasicMaterial({map:softShadowTexture(),transparent:true,
         opacity:0.55,depthWrite:false}));
-    blob.rotation.x=-Math.PI/2; blob.position.y=0.03; g.add(blob);
+    blob.rotation.x=-Math.PI/2; blob.position.y=0.03; g.add(blob);   // fuera del cuerpo: siempre plana
 
     // marcador de jugador controlado
     const ring=new THREE.Mesh(new THREE.RingGeometry(0.7,0.9,24),
@@ -300,7 +312,7 @@ class Player {
     const flex = 0.5 + Math.abs(sw)*0.7;
     this.lCodo.rotation.x = -flex; this.rCodo.rotation.x = -flex;
     // rebote vertical del cuerpo
-    this.mesh.children[0].position.y = 1.66 + Math.abs(Math.sin(this.runPhase))*Math.min(speed*0.02,0.12);
+    this.torso.position.y = 1.66 + Math.abs(Math.sin(this.runPhase))*Math.min(speed*0.02,0.12);
     if(this.stunTimer>0) this.stunTimer-=dt;
     if(this.slideCd>0) this.slideCd-=dt;
     if(this.heading>0) this.heading-=dt;
@@ -308,15 +320,18 @@ class Player {
     // pose: barrida (cuerpo al suelo), cabezazo (torso atrás) o caído por falta
     if(this.sliding>0){
       this.sliding-=dt;
-      this.mesh.rotation.x = -1.15;          // deslizándose
-      this.mesh.position.y = 0.28;
-      this.lLeg.rotation.x = 0.9; this.rLeg.rotation.x = -0.35;
+      // tumbado casi horizontal y APOYADO sobre el césped, no dentro de él
+      this.cuerpo.rotation.x = -1.42;
+      this.cuerpo.position.set(0, 0.42, -0.30);
+      this.lLeg.rotation.x = 0.85; this.rLeg.rotation.x = -0.30;
+      this.lArm.rotation.x = -0.9; this.rArm.rotation.x = -0.5;
     } else if(this.stunTimer>0){
-      this.mesh.rotation.x = -1.35;          // en el suelo tras la falta
-      this.mesh.position.y = 0.22;
+      this.cuerpo.rotation.x = -1.52;        // en el suelo tras la falta
+      this.cuerpo.position.set(0, 0.46, -0.34);
+      this.lArm.rotation.x = -1.1; this.rArm.rotation.x = -0.8;
     } else {
-      this.mesh.rotation.x = this.heading>0 ? -0.45 : 0;
-      this.mesh.position.y = 0;
+      this.cuerpo.rotation.x = this.heading>0 ? -0.45 : 0;
+      this.cuerpo.position.set(0,0,0);
     }
   }
 }
@@ -341,16 +356,16 @@ addEventListener('gamepaddisconnected', e=>{ if(e.gamepad.index===pad.index){pad
 // lee el estado bruto de un dispositivo concreto
 function leerDispositivo(dev){
   let mx=0,my=0,pass=false,shoot=false,sprint=false,sw=false;
-  if(dev==='teclado1'){
-    if(keys['KeyW'])my-=1; if(keys['KeyS'])my+=1;
-    if(keys['KeyA'])mx-=1; if(keys['KeyD'])mx+=1;
-    pass=!!keys['KeyJ']; shoot=!!keys['KeyK'];
-    sprint=!!(keys['KeyL']||keys['ShiftLeft']); sw=!!keys['Space'];
-  } else if(dev==='teclado2'){
-    if(keys['ArrowUp'])my-=1; if(keys['ArrowDown'])my+=1;
-    if(keys['ArrowLeft'])mx-=1; if(keys['ArrowRight'])mx+=1;
-    pass=!!keys['Comma']; shoot=!!keys['Period'];
-    sprint=!!(keys['Slash']||keys['ShiftRight']); sw=!!keys['Enter'];
+  if(dev==='teclado1' || dev==='teclado2'){
+    const b = binds[dev];
+    if(keys[b.arriba]) my-=1;
+    if(keys[b.abajo])  my+=1;
+    if(keys[b.izq])    mx-=1;
+    if(keys[b.der])    mx+=1;
+    pass   = !!keys[b.pase];
+    shoot  = !!keys[b.tiro];
+    sprint = !!keys[b.sprint];
+    sw     = !!keys[b.cambiar];
   } else if(dev.startsWith('pad')){
     const gp = navigator.getGamepads()[+dev.slice(3)];
     if(gp){
@@ -872,22 +887,24 @@ function doShoot(p, power){
 function updateAI(dt){
   const diff = DIFF[S.difficulty];
   for(let ti=0;ti<2;ti++){
-    const isHuman = ti===0;
+    // Se calcula UNA vez por equipo y tick: quién presiona y quién apoya.
+    const orden = ordenPorCercania(ti);
+    const presiona = orden[0] || null;    // va al balón
+    const apoya    = orden[1] || null;    // cubre por detrás, corta el pase
+
     for(const p of teams[ti]){
       if(p.humanOwner){ continue; }   // lo mueve una persona, no la IA
       if(p.stunTimer>0){ p.vel.multiplyScalar(0.8); continue; }
-
-      const targetsBall = shouldChase(p);
-      let desired = _v.set(0,0,0);
-
       if(p.isGK){ goalkeeper(p, dt); continue; }
 
+      const targetsBall = (p === presiona);
+
       // cabezazo en balones altos (centros y córners)
-      if(canHead(p) && rng()<0.30*60*DT){        // por segundo, no por frame
+      if(canHead(p) && rng()<0.30*60*DT){
         header(p, Math.abs(goalDirZ(p.team)-p.pos.z) < 30);
         continue;
       }
-      // entrada/barrida de la IA sobre el rival con balón
+      // entrada/barrida sobre el rival con balón
       if(targetsBall && S._owner && S._owner.team!==p.team && p.slideCd<=0
          && distXZ(p.pos, S._owner.pos)<2.3 && rng()<0.02*diff.react*60*DT){
         slideTackle(p);
@@ -895,26 +912,32 @@ function updateAI(dt){
       }
 
       if(S._owner===p){
-        // tiene el balón: avanzar a portería / decidir
         aiWithBall(p, diff, dt);
         continue;
       }
 
-      // la IA también se cansa: perseguir desgasta, posicionarse recupera
+      // perseguir desgasta; posicionarse recupera
       if(targetsBall) p.stamina = Math.max(0, p.stamina - dt*0.09);
       else            p.stamina = Math.min(1, p.stamina + dt*0.06);
 
+      const desired = _v.set(0,0,0);
+      let maxSpd;
       if(targetsBall){
         desired.copy(bola.pos).sub(p.pos);
-      } else {
-        // volver a posición de formación desplazada por el balón
-        homePos(ti, p.formation, _v2);
-        const ballBias = bola.pos.z * 0.18;
-        _v2.z += ballBias;
-        _v2.x = _v2.x*0.7 + bola.pos.x*0.25;
+        maxSpd = baseSpeed(p) * diff.ai;
+      } else if(p === apoya){
+        // apoyo: se coloca entre el balón y su propia portería, a unos metros
+        const dir = ti===0 ? 1 : -1;
+        _v2.copy(bola.pos); _v2.z -= dir*6; _v2.y = 0;
+        clampToField(_v2);
         desired.copy(_v2).sub(p.pos);
+        maxSpd = baseSpeed(p) * diff.ai * 0.95;
+      } else {
+        posicionDeBloque(p, _v2);
+        desired.copy(_v2).sub(p.pos);
+        // si está lejos de su sitio, va más rápido: así el bloque no se descuelga
+        maxSpd = baseSpeed(p) * (desired.length() > 12 ? 0.98 : 0.82);
       }
-      const maxSpd = baseSpeed(p) * (targetsBall?diff.ai:0.9);
       steer(p, desired, maxSpd, dt);
     }
   }
@@ -934,18 +957,40 @@ function enforceKickoffRule(){
   }
 }
 
-function shouldChase(p){
-  // el más cercano al balón (que no sea portero) presiona; si ése es el humano
-  // controlado, el 2º más cercano de la IA sale a presionar también.
-  const mine = teams[p.team];
-  let c1=null,d1=1e9,c2=null,d2=1e9;
-  for(const m of mine){ if(m.isGK) continue; const d=distXZ(m.pos,bola.pos);
-    if(d<d1){ d2=d1;c2=c1; d1=d;c1=m; } else if(d<d2){ d2=d;c2=m; } }
-  // si al más cercano lo lleva una persona, presiona el segundo (la IA no se queda quieta)
-  if(c1 && c1.humanOwner) return p===c2;
-  return p===c1;
+// Jugadores de campo de un equipo ordenados por cercanía al balón.
+// Los que lleva una persona no cuentan para los roles de presión: la IA
+// no debe quedarse quieta esperando a que el humano haga todo.
+function ordenPorCercania(ti){
+  const arr = teams[ti].filter(m => !m.isGK && !m.humanOwner && m.stunTimer<=0);
+  arr.sort((a,b) => distXZ(a.pos,bola.pos) - distXZ(b.pos,bola.pos));
+  return arr;
 }
 
+// Posición objetivo de un jugador SIN balón.
+// Antes todos se quedaban clavados en su hueco de formación con un
+// desplazamiento del 18% hacia el balón: por eso parecía que miraban pasar
+// la jugada. Ahora el bloque entero se mueve con el balón, sube al atacar y
+// se repliega al defender, y los delanteros pisan el área.
+function posicionDeBloque(p, out){
+  const ti = p.team, dir = ti===0 ? 1 : -1;   // hacia dónde ataca
+  homePos(ti, p.formation, out);
+  const atacamos = S.possession === ti;
+
+  // desplazamiento lateral: el equipo bascula hacia el lado del balón
+  out.x = out.x*0.55 + bola.pos.x*0.45;
+  // compacidad: cada uno cierra un 32% de su distancia al balón en profundidad
+  out.z += (bola.pos.z - out.z) * 0.32;
+  // subir en ataque, replegar en defensa
+  out.z += dir * (atacamos ? 9 : -5);
+
+  if(p.role === 'DEL' && atacamos) out.z += dir * 7;   // desmarque al área
+  if(p.role === 'DEF'){                                 // la línea no se descuelga
+    const propio = -dir * HALF_L;
+    out.z = dir > 0 ? Math.max(out.z, propio + 8) : Math.min(out.z, propio - 8);
+  }
+  clampToField(out);
+  return out;
+}
 // Velocidades realistas (m/s): correr ~6.5-7, sprint ~9 (≈100 m en 11 s).
 // Cruzar el campo (105 m) cuesta unos 12 s a tope, no 1 segundo.
 function baseSpeed(p){
@@ -1555,10 +1600,12 @@ function setupHUDTeams(){
   document.getElementById('hbadge').style.background=badgeCSS(S.homeTeam);
   document.getElementById('abadge').style.background=badgeCSS(S.awayTeam);
   updateScorebug();
+  const t = a => `<span class="k">${nombreTecla(binds.teclado1[a])}</span>`;
   document.getElementById('controlsHint').innerHTML =
-    `<b>CONTROLES</b><br>Mover <span class="k">W</span><span class="k">A</span><span class="k">S</span><span class="k">D</span> / Flechas<br>`+
-    `Pase <span class="k">J</span> · Tiro <span class="k">K</span><br>Sprint <span class="k">L</span> · Cambiar <span class="k">␣</span><br>`+
-    `<span style="opacity:.75">Sin balón: <span class="k">K</span> barrida · <span class="k">J/K</span> cabezazo</span><br>`+
+    `<b>CONTROLES</b><br>Mover ${t('arriba')}${t('izq')}${t('abajo')}${t('der')}<br>`+
+    `Pase ${t('pase')} · Tiro ${t('tiro')}<br>`+
+    `Sprint ${t('sprint')} · Cambiar ${t('cambiar')}<br>`+
+    `<span style="opacity:.75">Sin balón: ${t('tiro')} barrida · cabezazo con ${t('pase')}/${t('tiro')}</span><br>`+
     `Formación <span class="k">F</span> · Pausa <span class="k">Esc</span><br>`+
     `<span style="opacity:.6">Joystick: A pase · B tiro · RT sprint · Y cambiar</span>`;
 }
@@ -1576,6 +1623,7 @@ function startMatch(){
   setupHUDTeams(); updateCardsUI(); buildStaminaUI();
   placeKickoff(0);
   S.phase='kickoff'; S.phaseT=0; S.running=true; S.paused=false;
+  contarPartido();
   document.getElementById('menu').classList.add('hidden');
   document.getElementById('hud').style.display='block';
   document.getElementById('pause').style.display='none';
@@ -1595,6 +1643,61 @@ document.getElementById('toMenu').onclick=()=>{
 // ---------------------------------------------------------------------------
 //  ARRANQUE
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+//  OPCIONES — reasignar controles
+// ---------------------------------------------------------------------------
+let devEditando = 'teclado1';
+let esperandoTecla = null;      // acción pendiente de asignar
+
+function renderBinds(){
+  const cont=document.getElementById('listaBinds');
+  cont.innerHTML = ACCIONES.map(a=>`
+    <div class="bindrow">
+      <span class="acc">${a.nombre}</span>
+      <button data-acc="${a.id}">${nombreTecla(binds[devEditando][a.id])}</button>
+    </div>`).join('');
+  cont.querySelectorAll('button').forEach(b=>{
+    b.onclick=()=>{
+      cont.querySelectorAll('button').forEach(x=>x.classList.remove('esperando'));
+      b.classList.add('esperando'); b.textContent='pulsa una tecla…';
+      esperandoTecla = b.dataset.acc;
+    };
+  });
+  document.querySelectorAll('.otab').forEach(t=>{
+    t.classList.toggle('on', t.dataset.dev===devEditando);
+    t.onclick=()=>{ devEditando=t.dataset.dev; esperandoTecla=null; renderBinds(); };
+  });
+}
+
+function abrirOpciones(){
+  esperandoTecla=null; renderBinds();
+  const inp=document.getElementById('apodo');
+  inp.value = perfil.apodo || '';
+  inp.oninput = ()=> setApodo(inp.value);
+  document.getElementById('menu').classList.add('hidden');
+  document.getElementById('opciones').classList.remove('hidden');
+}
+function cerrarOpciones(){
+  document.getElementById('opciones').classList.add('hidden');
+  document.getElementById('menu').classList.remove('hidden');
+  if(S.running) setupHUDTeams();          // refrescar la ayuda con las teclas nuevas
+}
+
+// Captura de tecla para reasignar. Va en captura para adelantarse al
+// manejador normal del juego y no disparar una acción mientras se configura.
+addEventListener('keydown', e=>{
+  if(!esperandoTecla) return;
+  e.preventDefault(); e.stopPropagation();
+  if(e.code!=='Escape'){
+    // si la tecla ya estaba usada en este mismo dispositivo, se libera
+    const mapa = binds[devEditando];
+    for(const k in mapa) if(mapa[k]===e.code) mapa[k]='';
+    mapa[esperandoTecla] = e.code;
+    guardarBinds();
+  }
+  esperandoTecla=null; renderBinds();
+}, true);
+
 function boot(){
   initThree();
   buildSky(G.scene);
@@ -1606,6 +1709,16 @@ function boot(){
   buildConfetti();
   buildMenu();
   updatePadUI();
+
+  // panel de controles ocultable + botón de ayuda
+  const hint=document.getElementById('controlsHint');
+  const esMovil = matchMedia('(max-width: 820px)').matches;
+  if(esMovil) hint.classList.add('oculto');     // en el móvil estorba: arranca oculto
+  document.getElementById('btnAyuda').onclick=()=>hint.classList.toggle('oculto');
+
+  document.getElementById('playOpciones').onclick=abrirOpciones;
+  document.getElementById('cerrarOpciones').onclick=cerrarOpciones;
+  document.getElementById('resetBinds').onclick=()=>{ restaurarBinds(); renderBinds(); };
   window.__dbg = {
     // --- lectura ---
     get cam(){return G.camera.position;}, get ball(){return bola.pos;}, S, teams,

@@ -552,3 +552,80 @@ Estas son las que, si las rompés, te obligan a rehacer trabajo:
 ---
 
 **Archivos clave del proyecto actual referenciados:** `E:\fulbo\index.html` (monolito, 2411 líneas) · `E:\fulbo\vercel.json` (hoy sin `outputDirectory`, hay que tocarlo en la Fase 2).
+---
+
+## 7. Cuentas: anónimo para jugar solo, cuenta para jugar online
+
+**Requisito:** jugar en local (solo o varios en la misma máquina) **no** debe pedir
+cuenta. Jugar online **sí**.
+
+### La regla que evita el error clásico
+
+> El juego nunca debe *empezar* pidiendo que te registres. El registro aparece
+> **en el momento exacto** en que hace falta: al pulsar "Jugar online".
+
+Un juego que exige cuenta en la pantalla de carga pierde a la mayoría de la
+gente antes de ver el campo. Y técnicamente no hace falta: el partido local no
+toca la red.
+
+### Tres niveles de identidad
+
+| Nivel | Cómo se consigue | Qué permite | Dónde vive |
+|---|---|---|---|
+| **Anónimo** | automático, sin pedir nada | partido local, torneo, 1-4 personas en la misma máquina | `localStorage` |
+| **Invitado con nombre** | escribe un apodo | lo mismo, pero el torneo guarda su historial | `localStorage` |
+| **Cuenta** | correo + contraseña, o proveedor externo | **jugar online**, salas, ranking, progreso entre dispositivos | servidor |
+
+El perfil anónimo se crea solo la primera vez y ya guarda lo que hoy existe:
+teclas asignadas, equipo preferido, dificultad. Si más adelante crea una cuenta,
+ese perfil local **se sube** — no se pierde nada.
+
+### Qué NO hay que hacer
+
+**No escribas tu propia autenticación.** Guardar contraseñas bien (hash con
+argon2/bcrypt, sal, límite de intentos, recuperación por correo, verificación,
+sesiones, rotación de tokens) es un problema resuelto y fácil de hacer mal, y un
+fallo ahí no es un bug de juego: es una filtración de datos de tus jugadores.
+
+Opciones sensatas, en orden de menor esfuerzo:
+
+1. **Proveedor gestionado** (Supabase Auth, Clerk, Auth0, Firebase Auth). Te dan
+   correo+contraseña, enlaces mágicos y "entrar con Google" ya resueltos, con
+   plan gratuito suficiente para empezar. Devuelven un **JWT** que el servidor de
+   salas valida.
+2. **Sólo proveedores externos** (Google / Discord / Steam). Cero contraseñas que
+   custodiar. Para un juego, "entrar con Discord" suele encajar mejor que el correo.
+
+### Cómo encaja con las salas
+
+La cuenta **no** entra en el núcleo de simulación. El núcleo sigue sin saber qué
+es un usuario: sólo conoce **asientos** (`seats`, ver Fase 4d).
+
+```
+navegador                    servidor de salas            proveedor de identidad
+   │                                 │                             │
+   │── entrar ─────────────────────────────────────────────────────▶
+   │◀───────────────────────────────── JWT ────────────────────────│
+   │                                 │
+   │── unirse a sala (JWT) ─────────▶│  valida la firma del JWT
+   │                                 │  seat.userId = sub del token
+   │◀── estado de la sala ───────────│
+```
+
+- El **JWT se valida en el servidor**, nunca sólo en el cliente.
+- `seat.controllerId` (local) y `seat.userId` (online) son cosas distintas: en el
+  sofá cuatro personas comparten una cuenta; online cada asiento es una cuenta.
+- El núcleo recibe `InputCommand` por asiento y **no cambia una línea** entre
+  local y online. Esa es la ventaja de haber separado simulación y presentación.
+
+### Orden recomendado
+
+1. **Ahora**: perfil local anónimo (apodo + preferencias en `localStorage`).
+   No requiere servidor y ya mejora la experiencia local.
+2. **Con la Fase 7** (servidor mínimo): añadir el proveedor de identidad y exigir
+   sesión válida sólo en la ruta de "jugar online".
+3. **Con la Fase 8** (lobby): perfil público, ranking y progreso.
+
+**Aviso honesto:** hasta que exista el servidor de la Fase 7 no hay dónde
+guardar una cuenta. Implementar registro antes que servidor sería una pantalla
+bonita que no autentica nada.

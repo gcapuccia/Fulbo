@@ -29,6 +29,7 @@
   <div id="cardFx"></div>
   <div id="replayFx"><div class="tag"><i></i>REPETICIÓN</div></div>
   <div id="announce"><div class="big" id="annBig">¡GOL!</div><div class="small" id="annSmall"></div></div>
+  <button id="btnAyuda" title="Mostrar u ocultar los controles">?</button>
   <div id="controlsHint"></div>
   <div id="stamwrap"></div>
   <div id="padstate"><span class="dot"></span><span id="padtxt">Teclado</span></div>
@@ -57,6 +58,7 @@
       </div>
         <button id="play">▶ Partido amistoso</button>
       <button id="playLiga">🏆 Jugar torneo</button>
+      <button id="playOpciones">⚙ Opciones · Controles</button>
     </div>
     <div class="picker">
       <h2>Rival <span id="awayOv"></span></h2>
@@ -83,6 +85,30 @@
     <div class="tbtns">
       <button id="jugarJornada" class="prim">▶ Jugar jornada</button>
       <button id="salirTorneo">Salir del torneo</button>
+    </div>
+  </div>
+</div>
+
+<!-- Opciones -->
+<div id="opciones" class="hidden">
+  <div class="ow">
+    <h1>OPCIONES</h1>
+    <p class="ohint">Pulsa una acción y después la tecla que quieras asignarle.</p>
+    <div class="perfilbox">
+      <label for="apodo">Tu nombre</label>
+      <input id="apodo" type="text" maxlength="16" placeholder="Invitado" autocomplete="off">
+      <p class="ohint" style="margin:8px 0 0">Se guarda sólo en este dispositivo.
+      Para jugar <b>online</b> hará falta una cuenta; jugar solo o en esta misma
+      máquina no la necesita.</p>
+    </div>
+    <div class="otabs">
+      <button class="otab on" data-dev="teclado1">Teclado 1</button>
+      <button class="otab" data-dev="teclado2">Teclado 2</button>
+    </div>
+    <div id="listaBinds"></div>
+    <div class="obtns">
+      <button id="resetBinds">Restaurar por defecto</button>
+      <button id="cerrarOpciones" class="prim">Volver</button>
     </div>
   </div>
 </div>

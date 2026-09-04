@@ -57,6 +57,31 @@ fulbo/
 ├─ ARQUITECTURA.md               plan de modularización y camino al online
 ```
 
+## ⚙️ Opciones y controles
+
+Desde el menú, **⚙ Opciones · Controles**:
+
+- **Reasignar teclas**: pulsa una acción y después la tecla que quieras. Hay dos
+  perfiles independientes (Teclado 1 y Teclado 2) para jugar dos personas en el
+  mismo teclado. Se guarda en tu navegador.
+- **Tu nombre**: se guarda sólo en este dispositivo.
+
+Durante el partido, el botón **?** de abajo a la izquierda muestra u oculta el
+panel de controles. En el móvil arranca oculto para no tapar el campo.
+
+## 📱 Móvil
+
+La interfaz se adapta a pantallas estrechas: marcador compacto, minimapa más
+pequeño, menú en una sola columna y panel de controles plegado. Usa `100dvh`,
+así que la barra del navegador no recorta el campo.
+
+## 🔐 Cuentas
+
+Jugar **solo o con gente en la misma máquina no pide cuenta**: se crea un perfil
+anónimo y listo. La cuenta hará falta únicamente para **jugar online**, y el
+perfil local se subirá en lugar de perderse. El diseño completo está en
+[ARQUITECTURA.md](ARQUITECTURA.md) §7.
+
 ## 👥 Multijugador local (hasta 4 personas)
 
 En el menú, elige **Jugadores: 1-4**. Cada persona configura por separado:
