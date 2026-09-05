@@ -28,6 +28,10 @@ export function crearPresentador(dep){
           playKick();
           break;
 
+        case 'ATAJADA':                  // la palomita la dibuja la vista; aquí ruge la grada
+          crowdCheer();
+          break;
+
         case 'TARJETA':
           mostrarTarjeta(e.card);
           updateCardsUI();

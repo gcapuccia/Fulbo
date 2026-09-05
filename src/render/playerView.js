@@ -9,21 +9,37 @@
 
 import { suavizado } from '../core/rng.js';
 
-const DUR_PATADA = 0.36;              // lo que dura el gesto completo, en segundos
-const patadas = new Map();            // playerId -> segundos que le quedan al gesto
+const DUR_PATADA  = 0.36;             // lo que dura el golpeo, en segundos
+const DUR_PALOMITA = 0.85;            // la estirada del portero
+const DUR_FESTEJO = 5.00;             // celebración y cabizbajos tras el gol
+
+const patadas   = new Map();          // playerId -> segundos que le quedan al gesto
+const palomitas = new Map();          // playerId -> {t, lado}
+let festejo = null;                   // {team, t} — quién marcó y cuánto le queda
 
 /**
  * El bucle de render pasa por aquí los eventos del tick antes de presentarlos.
- * El núcleo ya emitía 'PATADA'; ahora dice además QUIÉN pegó, y con eso la
- * vista enciende el gesto. Si nadie llamara a esto, el partido sería idéntico.
+ * El núcleo emite qué pasó y quién lo hizo; la vista decide cómo se dibuja.
+ * Si nadie llamara a esto, el partido daría exactamente el mismo marcador.
  */
-export function anotarPatadas(eventos){
+export function anotarEventos(eventos){
   for(const e of eventos){
-    if(e.tipo === 'PATADA' && e.playerId != null) patadas.set(e.playerId, DUR_PATADA);
+    if(e.tipo === 'PATADA'  && e.playerId != null) patadas.set(e.playerId, DUR_PATADA);
+    if(e.tipo === 'ATAJADA' && e.playerId != null)
+      palomitas.set(e.playerId, { t: DUR_PALOMITA, lado: e.lado || 1 });
+    if(e.tipo === 'GOL' && e.team != null) festejo = { team: e.team, t: DUR_FESTEJO };
   }
   return eventos;                     // se devuelve para encadenar con presentar()
 }
-export function reiniciarPatadas(){ patadas.clear(); }
+export function reiniciarGestos(){ patadas.clear(); palomitas.clear(); festejo = null; }
+
+// Curva de la palomita: se lanza, queda estirado y se recompone.
+// 0 en pie, 1 completamente tendido.
+function curvaPalomita(u){
+  if(u < 0.22) return u/0.22;                                // se lanza
+  if(u < 0.62) return 1;                                     // estirado en el aire
+  return 1 - (u-0.62)/0.38;                                  // se levanta
+}
 
 // Curva de la pierna que golpea. `u` va de 0 (empieza) a 1 (termina) y el
 // resultado es la rotación del muslo: negativo atrás, positivo adelante.
@@ -42,6 +58,11 @@ const lim = (v, a, b) => v < a ? a : (v > b ? b : v);
  * de la del partido, sin tocar el estado autoritativo.
  * `mirarA` opcional: punto al que gira la cabeza (el balón).
  */
+/** Descuenta el reloj del festejo. Lo llama el bucle una vez por frame. */
+export function tickGestos(dt){
+  if(festejo){ festejo.t -= dt; if(festejo.t <= 0) festejo = null; }
+}
+
 export function syncPlayerView(p, dt, pose, mirarA){
   const x = pose ? pose.x : p.pos.x;
   const z = pose ? pose.z : p.pos.z;
@@ -53,12 +74,17 @@ export function syncPlayerView(p, dt, pose, mirarA){
   p.mesh.rotation.y = facing;
   p.mesh.position.set(x, 0, z);
 
-  // temporizador del gesto de patada: se consume aquí y en ningún otro sitio
+  // temporizadores de los gestos: se consumen aquí y en ningún otro sitio
   let patada = patadas.get(p.playerId) || 0;
   if(patada > 0){
     patada -= dt;
     if(patada > 0) patadas.set(p.playerId, patada);
     else { patadas.delete(p.playerId); patada = 0; }
+  }
+  const pal = palomitas.get(p.playerId);
+  if(pal){
+    pal.t -= dt;
+    if(pal.t <= 0) palomitas.delete(p.playerId);
   }
 
   // el cansancio acorta la zancada: un jugador fundido se nota al correr
@@ -103,8 +129,37 @@ export function syncPlayerView(p, dt, pose, mirarA){
     inclinaPatada = -g*0.10;                                        // se echa atrás al soltar
   }
 
+  // --- FESTEJO: tras el gol, unos celebran y otros bajan la cabeza ---
+  // El núcleo sigue jugando igual durante la espera del saque de centro; esto
+  // sólo cambia los brazos y la espalda de lo que ya se estaba dibujando.
+  let cabizbajo = 0;
+  if(festejo && p.sliding <= 0 && p.stunTimer <= 0 && !pal){
+    const u = 1 - festejo.t/DUR_FESTEJO;
+    const fuerza = Math.min(1, (1-u)*3);          // se apaga hacia el final
+    if(p.team === festejo.team){
+      const salto = Math.abs(Math.sin(p.runPhase*1.7));
+      p.lArm.rotation.x = -2.30*fuerza;  p.rArm.rotation.x = -2.30*fuerza;
+      p.lArm.rotation.z =  0.45*fuerza;  p.rArm.rotation.z = -0.45*fuerza;
+      p.lCodo.rotation.x = -0.25;        p.rCodo.rotation.x = -0.25;
+      p.torso.position.y += salto*0.10*fuerza;
+    } else {
+      cabizbajo = 0.22*fuerza;                    // hombros caídos
+      p.lArm.rotation.x *= 0.35;  p.rArm.rotation.x *= 0.35;
+    }
+  }
+
   // pose según el estado (los temporizadores los baja el núcleo, aquí sólo se leen)
-  if(p.sliding > 0){
+  if(pal){
+    // PALOMITA del portero: se lanza de costado, estirado, y se recompone
+    const v = curvaPalomita(1 - pal.t/DUR_PALOMITA);
+    p.cuerpo.rotation.set(0, 0, -pal.lado * 1.35 * v);
+    p.cuerpo.position.set(0, 0.30*v, 0);
+    p.lArm.rotation.x = -2.5*v;  p.rArm.rotation.x = -2.5*v;   // manos por delante
+    p.lArm.rotation.z = 0;       p.rArm.rotation.z = 0;
+    p.lCodo.rotation.x = -0.15;  p.rCodo.rotation.x = -0.15;
+    p.lLeg.rotation.x = -0.35*v; p.rLeg.rotation.x = -0.10*v;
+    p.lKnee.rotation.x = 0.45*v; p.rKnee.rotation.x = 0.20*v;
+  } else if(p.sliding > 0){
     p.cuerpo.rotation.set(-1.42, 0, 0);      // tumbado SOBRE el césped
     p.cuerpo.position.set(0, 0.42, -0.30);
     p.lLeg.rotation.x = 0.85; p.rLeg.rotation.x = -0.30;
@@ -115,7 +170,7 @@ export function syncPlayerView(p, dt, pose, mirarA){
     p.lArm.rotation.x = -1.1; p.rArm.rotation.x = -0.8;
   } else {
     // al correr el cuerpo se echa hacia adelante; cuanto más rápido, más
-    const inclina = Math.min(speed*0.030, 0.24) + inclinaPatada;
+    const inclina = Math.min(speed*0.030, 0.24) + inclinaPatada + cabizbajo;
     p.cuerpo.rotation.set(p.heading > 0 ? -0.45 : inclina, 0, resp*0.022);
     p.cuerpo.position.set(0, 0, 0);
   }
@@ -123,7 +178,8 @@ export function syncPlayerView(p, dt, pose, mirarA){
   // la cabeza sigue al balón: es lo que más "despierta" a un jugador parado
   if(p.cabeza){
     let ry = 0, rx = 0;
-    if(mirarA && p.stunTimer <= 0 && p.sliding <= 0){
+    if(cabizbajo > 0){ ry = 0; rx = 0.30; }        // el que encaja mira al suelo
+    else if(mirarA && p.stunTimer <= 0 && p.sliding <= 0){
       let a = Math.atan2(mirarA.x - x, mirarA.z - z) - facing;
       while(a >  Math.PI) a -= Math.PI*2;
       while(a < -Math.PI) a += Math.PI*2;

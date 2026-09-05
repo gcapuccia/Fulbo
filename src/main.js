@@ -21,7 +21,7 @@ import { crearReplayView }                    from './render/replayView.js';
 import { tickTimers }                         from './core/systems/movement.js';
 import { playerId, jugadorDeAsiento, esHumano, asignarControl as asignarControlSeat }
                                               from './core/systems/seats.js';
-import { syncPlayerView, anotarPatadas, reiniciarPatadas }
+import { syncPlayerView, anotarEventos, reiniciarGestos, tickGestos }
                                                  from './render/playerView.js';
 import { binds, guardarBinds, restaurarBinds, nombreTecla, ACCIONES }
                                               from './config/binds.js';
@@ -1136,6 +1136,8 @@ function goalkeeper(p, dt){
     m.estad.despejesPortero++;
     p.holdTimer = 0.9;          // un segundo largo con la pelota controlada
     m.S._owner = null;
+    // la vista dibuja la palomita hacia el lado del que venía el balón
+    emitir('ATAJADA', { playerId: p.playerId, lado: Math.sign(m.bola.pos.x - p.pos.x) || 1 });
   }
 }
 
@@ -1583,7 +1585,7 @@ function animate(){
     // --- presentación: a la tasa del monitor, no del simulador ---
     // los eventos del tick se vuelven imagen y sonido; de paso la vista se
     // entera de quién ha pegado para animar el golpeo
-    presentar(anotarPatadas(drenarEventos()));
+    presentar(anotarEventos(drenarEventos()));
 
     // --- REPETICIÓN: sólo vista. Graba instantáneas y las dibuja aparte ---
     const enJuego = m.S.phase==='play' || m.S.phase==='kickoff' || m.S.phase==='falta';
@@ -1597,6 +1599,7 @@ function animate(){
       if(enJuego === false && m.S.phase!=='goal') replayView.detener();
     }
 
+    tickGestos(frameDt);               // el reloj del festejo corre una sola vez
     for(let ti=0;ti<2;ti++)for(const p of m.teams[ti]){
       syncPlayerView(p, frameDt,
         posesRepeticion ? posesRepeticion.poses.get(p.playerId) : null,
@@ -1784,7 +1787,7 @@ function startMatch(){
   spawnTeams();
   m.S.score=[0,0]; m.S.clock=0; m.S.half=1; m.lastScorer=null;
   m.cards[0]={a:0,r:0}; m.cards[1]={a:0,r:0}; m.S.setPiece=null; limpiarEventos();
-  reiniciarPatadas();          // que no arranque nadie con un golpeo del partido anterior
+  reiniciarGestos();           // sin golpeos ni festejos heredados del partido anterior
   replayView.detener();     // el buffer de repetición no debe cruzar partidos
   if(!m.S.humans.length) crearHumanos(m.S.numHumanos);
   m.S.humans.forEach(h=>{ h.playerId=null; });

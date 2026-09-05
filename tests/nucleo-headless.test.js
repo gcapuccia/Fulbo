@@ -11,7 +11,7 @@ import { playerId, asignarControl, jugadorDeAsiento, esHumano, liberarAsiento }
 import { emitir, drenarEventos, limpiarEventos } from '../src/core/events.js';
 import { tomarSnapshot, interpolarSnapshot } from '../src/core/snapshot.js';
 import { crearPartido } from '../src/core/match.js';
-import { syncPlayerView, anotarPatadas, reiniciarPatadas } from '../src/render/playerView.js';
+import { syncPlayerView, anotarEventos, reiniciarGestos, tickGestos } from '../src/render/playerView.js';
 
 // Maniquí con la misma forma que un jugador de Three, pero sin Three: sólo
 // necesita objetos con `rotation`, `position` y sus métodos `set`.
@@ -297,11 +297,11 @@ describe('partidos independientes', () => {
 
   // --- LA VISTA NO PUEDE TOCAR LA SIMULACIÓN ---
   it('animar a un jugador no cambia una sola cifra de su estado', () => {
-    reiniciarPatadas();
+    reiniciarGestos();
     const p = maniqui();
     const antes = JSON.stringify([p.pos.toArray(), p.vel.toArray(), p.facing,
                                   p.stamina, p.stunTimer, p.sliding, p.heading]);
-    anotarPatadas([{ tipo:'PATADA', playerId: p.playerId }]);
+    anotarEventos([{ tipo:'PATADA', playerId: p.playerId }]);
     for(let i=0;i<30;i++) syncPlayerView(p, 1/60, null, { x:0, y:0.16, z:0 });
     const despues = JSON.stringify([p.pos.toArray(), p.vel.toArray(), p.facing,
                                     p.stamina, p.stunTimer, p.sliding, p.heading]);
@@ -309,10 +309,10 @@ describe('partidos independientes', () => {
   });
 
   it('el gesto de patada empieza atrás, cruza y se apaga solo', () => {
-    reiniciarPatadas();
+    reiniciarGestos();
     const p = maniqui();
     p.vel.set(0,0,0);                       // parado: sólo se ve el golpeo
-    anotarPatadas([{ tipo:'PATADA', playerId: p.playerId }]);
+    anotarEventos([{ tipo:'PATADA', playerId: p.playerId }]);
     const muslo = [];
     for(let i=0;i<30;i++){ syncPlayerView(p, 1/60); muslo.push(p.rLeg.rotation.x); }
     expect(Math.min(...muslo)).toBeLessThan(-0.8);      // arma hacia atrás
@@ -321,7 +321,7 @@ describe('partidos independientes', () => {
   });
 
   it('quieto no hay zancada: nadie marcha en el sitio', () => {
-    reiniciarPatadas();
+    reiniciarGestos();
     const p = maniqui();
     p.vel.set(0,0,0);
     for(let i=0;i<20;i++) syncPlayerView(p, 1/60);
@@ -329,8 +329,42 @@ describe('partidos independientes', () => {
     expect(Math.abs(p.rLeg.rotation.x)).toBeLessThan(1e-9);
   });
 
+  it('la palomita del portero se lanza al lado del balón y se levanta sola', () => {
+    reiniciarGestos();
+    const p = maniqui();
+    p.vel.set(0,0,0);
+    anotarEventos([{ tipo:'ATAJADA', playerId: p.playerId, lado: 1 }]);
+    const inclinacion = [];
+    for(let i=0;i<60;i++){ syncPlayerView(p, 1/60); inclinacion.push(p.cuerpo.rotation.z); }
+    expect(Math.min(...inclinacion)).toBeLessThan(-1.2);    // se tiende hacia ese lado
+    expect(Math.abs(inclinacion[inclinacion.length-1])).toBeLessThan(0.05);  // ya de pie
+  });
+
+  it('la palomita va al lado contrario si el balón viene por el otro', () => {
+    reiniciarGestos();
+    const p = maniqui();
+    anotarEventos([{ tipo:'ATAJADA', playerId: p.playerId, lado: -1 }]);
+    let maxZ = -Infinity;
+    for(let i=0;i<30;i++){ syncPlayerView(p, 1/60); maxZ = Math.max(maxZ, p.cuerpo.rotation.z); }
+    expect(maxZ).toBeGreaterThan(1.2);
+  });
+
+  it('tras el gol unos levantan los brazos y los otros bajan la cabeza', () => {
+    reiniciarGestos();
+    const marca = maniqui();  marca.team = 0;
+    const encaja = maniqui(); encaja.team = 1; encaja.playerId = 108;
+    anotarEventos([{ tipo:'GOL', team: 0 }]);
+    syncPlayerView(marca, 1/60);  syncPlayerView(encaja, 1/60);
+    expect(marca.lArm.rotation.x).toBeLessThan(-2);          // brazos arriba
+    expect(encaja.cabeza.rotation.x).toBeGreaterThan(0);     // cabeza gacha
+    // y el festejo se apaga solo pasados los cinco segundos
+    for(let i=0;i<330;i++){ tickGestos(1/60); syncPlayerView(marca, 1/60); }
+    expect(marca.lArm.rotation.x).toBeGreaterThan(-0.5);   // brazos otra vez de correr
+    expect(marca.lArm.rotation.z).toBe(0);
+  });
+
   it('la cabeza gira hacia el balón y no se sale de la nuca', () => {
-    reiniciarPatadas();
+    reiniciarGestos();
     const p = maniqui();
     p.vel.set(0,0,0); p.facing = 0;
     for(let i=0;i<120;i++) syncPlayerView(p, 1/60, null, { x:20, y:0.16, z:0 });

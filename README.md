@@ -205,6 +205,8 @@ Conecta el mando y pulsa cualquier botón para que el juego lo detecte
   zancada que cambia de cadencia con la velocidad, cuerpo que se inclina al
   correr, respiración al estar parado, cabeza que sigue al balón y gesto
   completo de golpeo (armar, pegar y acompañar) con pierna buena por dorsal.
+- Palomita del portero hacia el lado del remate, y festejo de gol: el equipo
+  que marca levanta los brazos y salta, el que encaja baja la cabeza.
 - Físicas de balón: gravedad, rebote, fricción de césped y arrastre de aire.
 - IA por roles (POR/DEF/MED/DEL), formación 4-3-3, portero que achica.
 - Pase inteligente al compañero mejor ubicado, tiro a puerta, robo/entrada.
