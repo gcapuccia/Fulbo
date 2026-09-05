@@ -19,3 +19,13 @@ desktop.ini
 
 # Build de Vite
 dist/
+
+# Superpowers: su propia documentación pide ignorar esta carpeta de trabajo.
+# (docs/superpowers/ SÍ se versiona a propósito: planes y specs del proyecto.)
+.superpowers/
+
+# Indexados de herramientas de análisis de código (no son del juego)
+.codebase-memory/
+.codegraph/
+graph.json
+GRAPH_REPORT.md
