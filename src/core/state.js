@@ -13,7 +13,7 @@ import { Vec3 } from './math.js';
 export const S = {
   quality:'alta', difficulty:'normal', halfLen:120, // segundos por tiempo
   formation:['4-3-3','4-4-2'],   // [tu equipo, rival]
-  kickTeam:0, kickoffTaken:true,
+  kickTeam:0, kickoffTaken:true, faltaPendiente:null,
   numHumanos:1, humans:[],
   homeTeam:TEAMS[0], awayTeam:TEAMS[4],
   running:false, paused:false,

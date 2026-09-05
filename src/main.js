@@ -199,6 +199,7 @@ class Player {
     this.stamina = 1;        // energía 0..1
     this.sprinting = false;
     this.slideCd = 0; this.sliding = 0; this.heading = 0;
+    this.holdTimer = 0;   // portero reteniendo el balón
     this.yellow = 0; this.expelled = false;
     this.humanOwner = null;   // qué persona lo controla (null = IA)
     this.isGK = role==='POR';
@@ -692,14 +693,19 @@ function commitFoul(offender, victim){
     offender.yellow=(offender.yellow||0)+1;
     if(offender.yellow>=2){ card='roja (doble amarilla)'; cards[offender.team].r++; sendOff(offender); }
   }
-  offender.stunTimer=1.1;
-  showCard(card);
-  if(penal){
-    const gz = defTeam===0? -HALF_L : HALF_L;
-    startSetPiece('penal', eq, 0, gz + (defTeam===0? 11 : -11));
-  } else {
-    startSetPiece('falta', eq, victim.pos.x, victim.pos.z);
-  }
+  offender.stunTimer = 0.9;      // el que barrió queda en el suelo
+  victim.stunTimer  = 1.3;       // y el derribado, más tiempo
+
+  // NO se cobra al instante. Antes la falta se resolvía en el mismo fotograma:
+  // saltaba el cartel y todos aparecían ya colocados sin que se viera qué pasó.
+  // Ahora se entra en una fase corta donde la jugada sigue a la vista —el que
+  // barrió en el suelo, el derribado cayendo— y recién después suena el silbato.
+  const gz = defTeam===0? -HALF_L : HALF_L;
+  if(S._owner){ S._owner.hasBall=false; S._owner=null; }   // el balón queda suelto
+  S.faltaPendiente = penal
+    ? { tipo:'penal', eq, x:0, z: gz + (defTeam===0? 11 : -11), card }
+    : { tipo:'falta', eq, x: victim.pos.x, z: victim.pos.z, card };
+  S.phase='falta'; S.phaseT=0;
 }
 function sendOff(p){
   p.expelled=true; p.mesh.visible=false;
@@ -761,6 +767,14 @@ function tryPossession(dt){
     owner.hasBall=true;
     // guardar el poseedor
     S._owner = owner; estad.ticksConDueno++;
+    // Si mi equipo recupera el balón, paso a manejar YO a quien lo tiene: si no,
+    // seguías controlando a un jugador lejano mientras la jugada iba por otro lado.
+    if(!owner.humanOwner && !owner.isGK){
+      const h = S.humans.find(x => x.team === owner.team);
+      if(h && h.controlled !== owner && S._owner !== h.controlled){
+        asignarControl(h, owner); refreshRings();
+      }
+    }
     // ¿el receptor estaba en posición adelantada?
     if(G.offsidePend){
       if(owner===G.offsidePend){ callOffside(owner); return; }
@@ -852,8 +866,12 @@ function updateAI(dt){
   for(let ti=0;ti<2;ti++){
     // Se calcula UNA vez por equipo y tick: quién presiona y quién apoya.
     const orden = ordenPorCercania(ti);
-    const presiona = orden[0] || null;    // va al balón
-    const apoya    = orden[1] || null;    // cubre por detrás, corta el pase
+    // Si el balón ya es NUESTRO, nadie del equipo va a por él: se acompaña la
+    // jugada. Antes los compañeros corrían a quitársela a su propio jugador.
+    const nuestra  = S._owner && S._owner.team === ti;
+    const presiona = nuestra ? null : (orden[0] || null);   // va al balón
+    const apoya    = nuestra ? null : (orden[1] || null);   // cubre y corta el pase
+    const acompana = nuestra ? (orden[0] || null) : null;   // se ofrece para el pase
 
     for(const p of teams[ti]){
       if(p.humanOwner){ continue; }   // lo mueve una persona, no la IA
@@ -895,6 +913,14 @@ function updateAI(dt){
         clampToField(_v2);
         desired.copy(_v2).sub(p.pos);
         maxSpd = baseSpeed(p) * diff.ai * 0.95;
+      } else if(p === acompana){
+        // acompañar: se ofrece por delante y abierto, sin pisarle el balón
+        const dir = ti===0 ? 1 : -1;
+        const lado = p.pos.x >= (S._owner ? S._owner.pos.x : 0) ? 1 : -1;
+        _v2.set(bola.pos.x + lado*9, 0, bola.pos.z + dir*7);
+        clampToField(_v2);
+        desired.copy(_v2).sub(p.pos);
+        maxSpd = baseSpeed(p) * 0.92;
       } else {
         posicionDeBloque(p, _v2);
         desired.copy(_v2).sub(p.pos);
@@ -1005,12 +1031,47 @@ function goalkeeper(p, dt){
   if(distXZ(p.pos,bola.pos)<15 && Math.abs(bola.pos.z-gz)<22){
     _v.copy(bp).sub(p.pos); _v.y=0;
   }
+  // mientras retiene el balón se queda quieto con él en las manos
+  if(p.holdTimer > 0){
+    p.holdTimer -= dt;
+    p.vel.multiplyScalar(0.6);
+    bola.pos.set(p.pos.x, 0.9, p.pos.z + (p.team===0 ? 0.5 : -0.5));
+    bola.vel.set(0,0,0);
+    bola.kickLock = 0.1;
+    if(p.holdTimer <= 0) distribuirPortero(p);
+    return;
+  }
   steer(p, _v, 7.2, dt);
-  // atajar y despejar
-  if(distXZ(p.pos,bola.pos)<1.9 && bola.pos.y<2.4){
+  // atajada: la retiene un momento en vez de reventarla de primera
+  if(distXZ(p.pos,bola.pos)<1.9 && bola.pos.y<2.4 && bola.kickLock<=0){
     estad.despejesPortero++;
-    const out=_v2.set((rng()-0.5)*22, 0, p.team===0?22:-22);
-    kickBall(p, out, 26, 4);
+    p.holdTimer = 0.9;          // un segundo largo con la pelota controlada
+    S._owner = null;
+  }
+}
+
+// Saque del portero: busca a un compañero desmarcado y se la juega corta;
+// sólo revienta el balón si no encuentra a nadie. Antes SIEMPRE despejaba.
+function distribuirPortero(p){
+  const dir = p.team===0 ? 1 : -1;
+  let mejor=null, mejorPuntos=-1e9;
+  for(const m of teams[p.team]){
+    if(m===p || m.isGK || m.expelled) continue;
+    const d = distXZ(p.pos, m.pos);
+    if(d < 8 || d > 42) continue;                  // ni encima ni imposible
+    const libre = nearestOpponentDist(m);
+    if(libre < 6) continue;                        // marcado: no se la damos
+    const avance = (m.pos.z - p.pos.z) * dir;
+    const puntos = libre*1.4 + avance*0.5 - d*0.10;
+    if(puntos > mejorPuntos){ mejorPuntos=puntos; mejor=m; }
+  }
+  if(mejor){
+    const v = _v2.copy(mejor.pos).sub(p.pos);
+    const dist = v.length();
+    kickBall(p, v, Math.min(9 + dist*0.62, 26), Math.min(dist*0.10, 2.4));
+  } else {
+    const out=_v2.set((rng()-0.5)*26, 0, dir*30);  // sin opción: despeje largo
+    kickBall(p, out, 27, 5);
   }
 }
 
@@ -1049,19 +1110,38 @@ function updateHuman(dt, h){
   clampToField(p.pos);
   p.sprinting = wantSprint;
 
-  const hasBall = S._owner===p;
+  // ¿Lleva el balón? S._owner se calcula DESPUÉS de mover a los humanos, así que
+  // va un tick atrasado: con la comprobación estricta, pulsar tiro justo al ganar
+  // la pelota hacía una barrida en vez de disparar. Se admite también "el balón
+  // está a mi alcance y a ras de suelo".
+  const cerca = distXZ(p.pos, bola.pos) < CAPTURA*1.25 && bola.pos.y < 1.5;
+  const hasBall = S._owner===p || (cerca && (!S._owner || S._owner===p));
+
   if(input.switch && !hasBall){ // cambiar de jugador
     asignarControl(h, masCercanoLibre(h.team, h)); refreshRings();
   }
   if(input.pass){
     if(hasBall) doPass(p);
     else if(canHead(p)) header(p, false);          // cabezazo de despeje/pase
+    else if(cerca) h.buffer = { accion:'pase', t:0.30 };   // aún no es mío: lo dejo pedido
     else { asignarControl(h, masCercanoLibre(h.team, h)); refreshRings(); }
   }
   if(input.shoot){
     if(hasBall) doShoot(p, 0.8);
     else if(canHead(p)) header(p, true);           // cabezazo a puerta
+    else if(cerca) h.buffer = { accion:'tiro', t:0.30 };
     else slideTackle(p);                            // barrida
+  }
+
+  // Búfer de entrada: si pediste tiro o pase un instante antes de tener el
+  // balón, la acción se ejecuta en cuanto lo tengas. Es lo que hace que el
+  // control se sienta receptivo en vez de "a veces no responde".
+  if(h.buffer){
+    h.buffer.t -= dt;
+    if(S._owner===p){
+      if(h.buffer.accion==='tiro') doShoot(p, 0.8); else doPass(p);
+      h.buffer = null;
+    } else if(h.buffer.t <= 0) h.buffer = null;
   }
 }
 
@@ -1289,6 +1369,12 @@ function updatePhase(dt){
     // el humano dispone de unos segundos para ejecutar; la IA saca sola
     const auto = (sp && equipoTieneHumano(sp.team)) ? 4.5 : 1.3;
     if(S.phaseT>auto) takeSetPiece();
+  } else if(S.phase==='falta'){
+    if(S.phaseT > 1.3){                       // se deja ver la infracción
+      const f = S.faltaPendiente; S.faltaPendiente = null;
+      if(f){ showCard(f.card); startSetPiece(f.tipo, f.eq, f.x, f.z); }
+      else { S.phase='play'; S.phaseT=0; }
+    }
   } else if(S.phase==='goal'){
     if(S.phaseT>2.6) startReplay();          // celebración -> repetición
   } else if(S.phase==='replay'){
@@ -1375,6 +1461,12 @@ function stepSim(dt){
     updateAI(dt);
     enforceKickoffRule();
     tryPossession(dt);
+    updateBall(dt);
+    recordReplay(dt);
+  } else if(S.phase==='falta'){
+    // la jugada se sigue viendo, pero nadie toma el balón: queda suelto
+    updateHumans(dt);
+    updateAI(dt);
     updateBall(dt);
     recordReplay(dt);
   } else if(S.phase==='setpiece'){
