@@ -1,7 +1,7 @@
 // Efectos: confeti de gol y destellos de cámaras en las gradas.
 import * as THREE from 'three';
 import { F, HALF_W, HALF_L } from '../config/field.js';
-import { S } from '../core/state.js';
+import { activo } from '../core/activo.js';
 import { G } from '../app/G.js';
 
 export function buildConfetti(){
@@ -20,7 +20,7 @@ export function burstConfetti(team){
   const pos=G.confetti.geometry.attributes.position.array;
   const col=G.confetti.geometry.attributes.color.array;
   const vel=G.confetti.userData.vel; const c=new THREE.Color();
-  const t = team===0?S.homeTeam:S.awayTeam;
+  const t = team===0?activo().S.homeTeam:activo().S.awayTeam;
   for(let i=0;i<G.confetti.userData.N;i++){
     pos[i*3]= (Math.random()-0.5)*14; pos[i*3+1]=2+Math.random()*4; pos[i*3+2]= z*0.9 + (Math.random()-0.5)*8;
     vel[i*3]=(Math.random()-0.5)*6; vel[i*3+1]=6+Math.random()*8; vel[i*3+2]=(Math.random()-0.5)*6;

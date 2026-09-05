@@ -10,6 +10,7 @@ import { playerId, asignarControl, jugadorDeAsiento, esHumano, liberarAsiento }
   from '../src/core/systems/seats.js';
 import { emitir, drenarEventos, limpiarEventos } from '../src/core/events.js';
 import { tomarSnapshot, interpolarSnapshot } from '../src/core/snapshot.js';
+import { crearPartido } from '../src/core/match.js';
 
 describe('núcleo headless', () => {
   it('no existe document ni WebGL en este entorno', () => {
@@ -231,5 +232,50 @@ describe('instantáneas', () => {
     expect(() => interpolarSnapshot(s1, s2, 0.5)).not.toThrow();
     const r = interpolarSnapshot(s1, s2, 0.5);
     expect(r.poses.has(teams[0][0].playerId)).toBe(true);
+  });
+});
+
+// Fase 4g: un partido = un objeto. Es lo que permite varias salas a la vez.
+describe('partidos independientes', () => {
+  it('dos partidos no comparten NADA', () => {
+    const a = crearPartido({ semilla: 1 });
+    const b = crearPartido({ semilla: 2 });
+    expect(a).not.toBe(b);
+    expect(a.S).not.toBe(b.S);
+    expect(a.S.score).not.toBe(b.S.score);
+    expect(a.teams).not.toBe(b.teams);
+    expect(a.bola).not.toBe(b.bola);
+    expect(a.cards).not.toBe(b.cards);
+  });
+
+  it('marcar en un partido no afecta al otro', () => {
+    const a = crearPartido(), b = crearPartido();
+    a.S.score[0] = 3;
+    a.cards[1].r = 1;
+    a.bola.pos.set(10, 0, 20);
+    expect(b.S.score).toEqual([0, 0]);
+    expect(b.cards[1].r).toBe(0);
+    expect(b.bola.pos.x).toBe(0);
+  });
+
+  it('cada partido tiene su propio azar', () => {
+    const a = crearPartido({ semilla: 42 });
+    const b = crearPartido({ semilla: 42 });
+    expect([a.rng(), a.rng()]).toEqual([b.rng(), b.rng()]);   // misma semilla, misma serie
+    const c = crearPartido({ semilla: 7 });
+    expect(c.rng()).not.toBe(crearPartido({ semilla: 8 }).rng());
+  });
+
+  it('consumir azar en una sala no desplaza el de la otra', () => {
+    const a = crearPartido({ semilla: 5 });
+    const b = crearPartido({ semilla: 5 });
+    a.rng(); a.rng(); a.rng();          // la sala A juega tres tiradas
+    expect(b.rng()).toBe(crearPartido({ semilla: 5 }).rng());   // B sigue intacta
+  });
+
+  it('el partido entero es serializable salvo su generador', () => {
+    const a = crearPartido();
+    const { _gen, rng, sembrar, ...datos } = a;
+    expect(() => JSON.stringify(datos)).not.toThrow();
   });
 });

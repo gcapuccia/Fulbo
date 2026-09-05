@@ -1,7 +1,7 @@
 // Modo torneo: liga de todos contra todos entre los ocho equipos.
 // Los partidos del usuario se juegan; el resto se simulan por fuerza de plantilla.
 import { TEAMS } from '../config/teams.js';
-import { S } from '../core/state.js';
+import { activo } from '../core/activo.js';
 import { badgeCSS } from '../ui/badge.js';
 
 export const LIGA = { activa:false, jornada:0, calendario:[], tabla:null, ultimos:[] };
@@ -19,8 +19,8 @@ export function generarCalendario(ids){
 
 export function crearLiga(){
   LIGA.tabla={};
-  TEAMS.forEach(t=>LIGA.tabla[t.id]={id:t.id,pj:0,g:0,e:0,p:0,gf:0,gc:0,pts:0});
-  LIGA.calendario=generarCalendario(TEAMS.map(t=>t.id));
+  TEAMactivo().S.forEach(t=>LIGA.tabla[t.id]={id:t.id,pj:0,g:0,e:0,p:0,gf:0,gc:0,pts:0});
+  LIGA.calendario=generarCalendario(TEAMactivo().S.map(t=>t.id));
   LIGA.jornada=0; LIGA.activa=true; LIGA.ultimos=[];
 }
 
@@ -44,7 +44,7 @@ export function simularJornada(saltar){
   const j=LIGA.calendario[LIGA.jornada]; if(!j) return;
   for(const [a,b] of j){
     if(saltar && (a===saltar[0]&&b===saltar[1] || a===saltar[1]&&b===saltar[0])) continue;
-    const A=TEAMS.find(t=>t.id===a), B=TEAMS.find(t=>t.id===b);
+    const A=TEAMactivo().S.find(t=>t.id===a), B=TEAMactivo().S.find(t=>t.id===b);
     registrar(a,b, golesSimulados(A.ov+3,B.ov), golesSimulados(B.ov,A.ov+3));
   }
 }
@@ -56,7 +56,7 @@ export function clasificacion(){
 
 export function partidoUsuario(){
   const j=LIGA.calendario[LIGA.jornada]; if(!j) return null;
-  return j.find(([a,b])=>a===S.homeTeam.id||b===S.homeTeam.id) || null;
+  return j.find(([a,b])=>a===activo().S.homeTeam.id||b===activo().S.homeTeam.id) || null;
 }
 
 export function mostrarTorneo(){
@@ -66,8 +66,8 @@ export function mostrarTorneo(){
   el.classList.remove('hidden');
   const cuerpo=document.getElementById('tablaBody');
   cuerpo.innerHTML = clasificacion().map((r,i)=>{
-    const t=TEAMS.find(x=>x.id===r.id);
-    const yo = r.id===S.homeTeam.id;
+    const t=TEAMactivo().S.find(x=>x.id===r.id);
+    const yo = r.id===activo().S.homeTeam.id;
     return `<tr class="${yo?'yo':''}">
       <td>${i+1}</td>
       <td><span class="bd" style="background:${badgeCSS(t)}"></span>${t.nombre}</td>
@@ -80,7 +80,7 @@ export function mostrarTorneo(){
   const res=document.getElementById('ultimos');
   res.innerHTML = LIGA.ultimos.length
     ? '<h4>Última jornada</h4>' + LIGA.ultimos.map(u=>{
-        const A=TEAMS.find(t=>t.id===u.idL), B=TEAMS.find(t=>t.id===u.idV);
+        const A=TEAMactivo().S.find(t=>t.id===u.idL), B=TEAMactivo().S.find(t=>t.id===u.idV);
         return `<div class="res"><span>${A.nombre}</span><b>${u.gl} - ${u.gv}</b><span>${B.nombre}</span></div>`;
       }).join('') : '';
 
@@ -88,16 +88,16 @@ export function mostrarTorneo(){
   const btn=document.getElementById('jugarJornada');
   const info=document.getElementById('proxInfo');
   if(prox && LIGA.jornada < LIGA.calendario.length){
-    const rivalId = prox[0]===S.homeTeam.id? prox[1] : prox[0];
-    const rival=TEAMS.find(t=>t.id===rivalId);
-    const local = prox[0]===S.homeTeam.id;
-    S.awayTeam = rival;
+    const rivalId = prox[0]===activo().S.homeTeam.id? prox[1] : prox[0];
+    const rival=TEAMactivo().S.find(t=>t.id===rivalId);
+    const local = prox[0]===activo().S.homeTeam.id;
+    activo().S.awayTeam = rival;
     info.innerHTML=`Jornada ${LIGA.jornada+1} de ${LIGA.calendario.length} ·
-      <b>${S.homeTeam.nombre}</b> vs <b>${rival.nombre}</b> ${local?'(local)':'(visitante)'}`;
+      <b>${activo().S.homeTeam.nombre}</b> vs <b>${rival.nombre}</b> ${local?'(local)':'(visitante)'}`;
     btn.style.display=''; btn.textContent='▶ Jugar jornada '+(LIGA.jornada+1);
   } else {
     const campeon=clasificacion()[0];
-    info.innerHTML=`<b>Torneo finalizado</b> · Campeón: ${TEAMS.find(t=>t.id===campeon.id).nombre}`;
+    info.innerHTML=`<b>Torneo finalizado</b> · Campeón: ${TEAMactivo().S.find(t=>t.id===campeon.id).nombre}`;
     btn.style.display='none';
   }
 }
