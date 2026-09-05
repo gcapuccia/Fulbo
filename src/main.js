@@ -15,6 +15,8 @@ import { DT, MAX_PASOS, DIFF, SPRINT_MUL, TOQUE_MAX, CAPTURA, SP_LABEL,
                                               from './config/rules.js';
 // --- Núcleo ---
 import { Vec3 }                               from './core/math.js';
+import { emitir, drenarEventos, limpiarEventos } from './core/events.js';
+import { crearPresentador }                   from './ui/presenter.js';
 import { tickTimers }                         from './core/systems/movement.js';
 import { playerId, jugadorDeAsiento, esHumano, asignarControl as asignarControlSeat }
                                               from './core/systems/seats.js';
@@ -512,7 +514,7 @@ function setFormation(ti, nombre){
   S.formation[ti]=nombre;
   const forma=FORMACIONES[nombre];
   teams[ti].forEach((p,i)=>{ const f=forma[i]; if(f){ p.formation=f; p.role=f.r; } });
-  if(ti===0){ announce('FORMACIÓN', nombre); document.getElementById('formTag').textContent=nombre; }
+  if(ti===0){ emitir('FORMACION', { nombre }); const t=document.getElementById('formTag'); if(t) t.textContent=nombre; }
 }
 function cycleFormation(){
   const i=NOMBRES_FORM.indexOf(S.formation[0]);
@@ -605,8 +607,7 @@ function startSetPiece(type, team, x, z){
   positionForSetPiece(type, team, x, z, taker);
   // si hay un humano en el equipo que saca, le damos el ejecutor
   if(taker){ const h=S.humans.find(x=>x.team===team); if(h){ asignarControl(h,taker); refreshRings(); } }
-  announce(SP_LABEL[type], teamName(team));
-  playWhistle(1);
+  emitir('SAQUE', { etiqueta: SP_LABEL[type], team });
 }
 
 // coloca a los 22 jugadores de forma coherente con la jugada
@@ -716,13 +717,17 @@ function sendOff(p){
     asignarControl(h, masCercanoLibre(h.team, h)); refreshRings(); }
 }
 function showCard(card){
-  if(!card) { announce('FALTA',''); return; }
+  if(!card){ emitir('FALTA'); return; }
+  emitir('TARJETA', { card });
+}
+
+// Pintar la tarjeta es cosa de la vista; el temporizador de 2,2 s es de reloj
+// de pared a propósito: es una animación de interfaz, no del partido.
+function mostrarTarjeta(card){
   const el=document.getElementById('cardFx');
-  el.className = card.startsWith('roja')? 'show roja':'show amarilla';
-  clearTimeout(showCard._t);
-  showCard._t=setTimeout(()=>el.className='', 2200);
-  announce(card.startsWith('roja')?'¡TARJETA ROJA!':'TARJETA AMARILLA','');
-  updateCardsUI();
+  el.className = card.startsWith('roja') ? 'show roja' : 'show amarilla';
+  clearTimeout(mostrarTarjeta._t);
+  mostrarTarjeta._t = setTimeout(()=>el.className='', 2200);
 }
 function updateCardsUI(){
   document.getElementById('cardsH').textContent = `🟨${cards[0].a} 🟥${cards[0].r}`;
@@ -799,7 +804,7 @@ function kickBall(from, dirVec, power, lift){
   if(S._owner){ S._owner.hasBall=false; S._owner=null; }
   // el saque de centro se considera ejecutado en cuanto se toca el balón
   if(S.phase==='kickoff'){ S.kickoffTaken=true; S.phase='play'; S.phaseT=0; }
-  playKick();
+  emitir('PATADA');
 }
 
 // pase al compañero mejor ubicado hacia el ataque
@@ -840,7 +845,7 @@ function isOffside(receptor, pasador){
 }
 function callOffside(receptor){
   G.offsidePend = null;
-  announce('FUERA DE JUEGO', teamName(1-receptor.team));
+  emitir('FUERA_DE_JUEGO', { contra: 1-receptor.team });
   startSetPiece('falta', 1-receptor.team, receptor.pos.x, receptor.pos.z);
 }
 
@@ -1201,7 +1206,7 @@ function slideTackle(p){
     bola.vel.set(dir.x*11, 1.3, dir.z*11);
     bola.kickLock=0.28; G.lastTouch=p.team;
     if(S._owner){ S._owner.hasBall=false; S._owner=null; }
-    S.possession=p.team; playKick();
+    S.possession=p.team; emitir('PATADA');
   } else if(victim && dv<2.5){
     commitFoul(p, victim);   // se lleva al rival por delante -> falta
   }
@@ -1321,11 +1326,7 @@ function scoreGoal(team){
   S.score[team]++; G.lastScorer=team;
   G.goalCooldown=3.2;
   S.phase='goal'; S.phaseT=0;
-  updateScorebug();
-  const scorer = names[team][ (7+ (rng()*3|0)) ];
-  announce('¡GOOOL!', `${team===0?S.homeTeam.nombre:S.awayTeam.nombre} — ${scorer}`);
-  burstConfetti(team);
-  playWhistle(2); crowdCheer();
+  emitir('GOL', { team, scorerIdx: 7 + (rng()*3|0) });
 }
 
 function announce(big, small){
@@ -1397,6 +1398,8 @@ function updatePhase(dt){
       if(f){ showCard(f.card); startSetPiece(f.tipo, f.eq, f.x, f.z); }
       else { S.phase='play'; S.phaseT=0; }
     }
+  } else if(S.phase==='full'){
+    if(S.phaseT > 5) cerrarPartido();      // 5 s medidos en ticks, no en reloj de pared
   } else if(S.phase==='goal'){
     if(S.phaseT>2.6) startReplay();          // celebración -> repetición
   } else if(S.phase==='replay'){
@@ -1404,18 +1407,27 @@ function updatePhase(dt){
   } else if(S.phase==='play'){
     S.clock+=dt;
     if(S.clock>=S.halfLen){
-      if(S.half===1){ S.half=2; S.clock=0; announce('DESCANSO','2do tiempo'); placeKickoff(1); S.phase='kickoff'; S.phaseT=0; playWhistle(1);}
+      if(S.half===1){ S.half=2; S.clock=0; emitir('DESCANSO'); placeKickoff(1); S.phase='kickoff'; S.phaseT=0; }
       else { endMatch(); }
     }
   }
 }
 
 function endMatch(){
-  S.phase='full'; S.running=false;
+  // El partido NO se detiene aquí: pasa a fase 'full' y sigue contando phaseT.
+  // Antes esperaba 5000 ms con setTimeout, que es RELOJ DE PARED: si el
+  // navegador pasa a segundo plano, requestAnimationFrame se frena pero
+  // setTimeout no, así que la pantalla final llegaba desincronizada. Y un
+  // servidor no puede depender del reloj de pared para el flujo del partido.
+  S.phase='full'; S.phaseT=0;
   const r = S.score[0]===S.score[1]?'EMPATE': (S.score[0]>S.score[1]? `Gana ${S.homeTeam.nombre}`:`Gana ${S.awayTeam.nombre}`);
-  announce('FINAL', `${S.homeTeam.nombre} ${S.score[0]} — ${S.score[1]} ${S.awayTeam.nombre} · ${r}`);
-  playWhistle(3);
-  setTimeout(()=>{
+  emitir('FINAL', { texto: `${S.homeTeam.nombre} ${S.score[0]} — ${S.score[1]} ${S.awayTeam.nombre} · ${r}` });
+}
+
+// Se ejecuta cuando la fase 'full' cumple su tiempo, medido en ticks.
+function cerrarPartido(){
+  S.running=false;
+  {
     document.getElementById('hud').style.display='none';
     if(LIGA.activa){
       // se registra el partido jugado y se simula el resto de la jornada
@@ -1434,7 +1446,7 @@ function endMatch(){
       document.getElementById('menu').classList.remove('hidden');
       S.phase='menu';
     }
-  }, 5000);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1476,6 +1488,13 @@ function drawMinimap(){
 // UN TICK de simulación, siempre con el mismo dt. Todo lo que decide el
 // resultado del partido vive aquí dentro; el render va aparte, a la tasa
 // del monitor. Sin esto no hay servidor autoritativo posible.
+// El presentador es lo ÚNICO que traduce eventos del partido en interfaz.
+const presentar = crearPresentador({
+  announce, updateScorebug, updateCardsUI, burstConfetti,
+  playWhistle, playKick, crowdCheer, mostrarTarjeta, teamName,
+  nombreGoleador: (team, idx) => names[team][idx] || 'Anónimo',
+});
+
 function stepSim(dt){
   updatePhase(dt);
   if(S.phase==='play'||S.phase==='kickoff'){
@@ -1514,6 +1533,7 @@ function animate(){
     while(G.acumulador >= DT && pasos < MAX_PASOS){ stepSim(DT); G.acumulador -= DT; pasos++; }
     if(pasos === MAX_PASOS) G.acumulador = 0;   // se descarta el atraso en vez de acumularlo
     // --- presentación: a la tasa del monitor, no del simulador ---
+    presentar(drenarEventos());        // los eventos del tick se vuelven imagen y sonido
     for(let ti=0;ti<2;ti++)for(const p of teams[ti]) syncPlayerView(p, frameDt);
     syncBallView(frameDt);
     updateConfetti(frameDt);
@@ -1696,7 +1716,7 @@ function startMatch(){
   teams.forEach(arr=>arr.forEach(p=>G.scene.remove(p.mesh))); teams[0]=[]; teams[1]=[];
   spawnTeams();
   S.score=[0,0]; S.clock=0; S.half=1; G.lastScorer=null;
-  cards[0]={a:0,r:0}; cards[1]={a:0,r:0}; S.setPiece=null;
+  cards[0]={a:0,r:0}; cards[1]={a:0,r:0}; S.setPiece=null; limpiarEventos();
   replay.frames.length=0;   // el buffer guarda referencias a los Player del partido anterior
   if(!S.humans.length) crearHumanos(S.numHumanos);
   S.humans.forEach(h=>{ h.playerId=null; });

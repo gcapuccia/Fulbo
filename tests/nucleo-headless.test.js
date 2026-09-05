@@ -1,13 +1,14 @@
 // El núcleo tiene que poder correr SIN navegador: sin document, sin WebGL,
 // sin Three. Es la condición que hace posible un servidor autoritativo con
 // salas. Si este test falla, alguien volvió a soldar simulación y render.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { Vec3 } from '../src/core/math.js';
 import { rng, sembrar, suavizado } from '../src/core/rng.js';
 import { S, teams, cards, bola } from '../src/core/state.js';
 import { tickTimers } from '../src/core/systems/movement.js';
 import { playerId, asignarControl, jugadorDeAsiento, esHumano, liberarAsiento }
   from '../src/core/systems/seats.js';
+import { emitir, drenarEventos, limpiarEventos } from '../src/core/events.js';
 
 describe('núcleo headless', () => {
   it('no existe document ni WebGL en este entorno', () => {
@@ -150,5 +151,31 @@ describe('asientos', () => {
     expect(p.ownerSeat).toBeNull();
     expect(a.playerId).toBeNull();
     expect(esHumano(p)).toBe(false);
+  });
+});
+
+// Fase 4e: el núcleo no pinta ni suena — deja constancia y otro lo recoge.
+describe('buzón de eventos', () => {
+  beforeEach(() => limpiarEventos());
+
+  it('drenar devuelve lo emitido y deja el buzón vacío', () => {
+    emitir('GOL', { team: 0, scorerIdx: 8 });
+    emitir('PATADA');
+    const primera = drenarEventos();
+    expect(primera).toHaveLength(2);
+    expect(primera[0]).toEqual({ tipo: 'GOL', team: 0, scorerIdx: 8 });
+    expect(drenarEventos()).toHaveLength(0);      // ya se vació
+  });
+
+  it('los eventos son SERIALIZABLES: pueden viajar a una sala', () => {
+    emitir('SAQUE', { etiqueta: 'CÓRNER', team: 1 });
+    emitir('TARJETA', { card: 'amarilla' });
+    const paquete = drenarEventos();
+    expect(() => JSON.stringify(paquete)).not.toThrow();
+    expect(JSON.parse(JSON.stringify(paquete))).toEqual(paquete);
+  });
+
+  it('un tick sin novedades no genera basura', () => {
+    expect(drenarEventos()).toEqual([]);
   });
 });
