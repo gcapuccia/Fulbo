@@ -11,6 +11,22 @@ import { playerId, asignarControl, jugadorDeAsiento, esHumano, liberarAsiento }
 import { emitir, drenarEventos, limpiarEventos } from '../src/core/events.js';
 import { tomarSnapshot, interpolarSnapshot } from '../src/core/snapshot.js';
 import { crearPartido } from '../src/core/match.js';
+import { syncPlayerView, anotarPatadas, reiniciarPatadas } from '../src/render/playerView.js';
+
+// Maniquí con la misma forma que un jugador de Three, pero sin Three: sólo
+// necesita objetos con `rotation`, `position` y sus métodos `set`.
+function nodo(){
+  const v = (o={}) => Object.assign({ x:0, y:0, z:0, set(a,b,c){ this.x=a; this.y=b; this.z=c; } }, o);
+  return { rotation: v(), position: v() };
+}
+function maniqui(){
+  const p = { playerId: 7, num: 11, team: 0,
+    pos: new Vec3(3, 0, -4), vel: new Vec3(2, 0, 0),
+    facing: 0.5, stamina: 0.8, stunTimer: 0, sliding: 0, heading: 0, runPhase: 0 };
+  for(const k of ['mesh','cuerpo','torso','cabeza','lLeg','rLeg','lKnee','rKnee',
+                  'lArm','rArm','lCodo','rCodo']) p[k] = nodo();
+  return p;
+}
 
 describe('núcleo headless', () => {
   it('no existe document ni WebGL en este entorno', () => {
@@ -277,5 +293,48 @@ describe('partidos independientes', () => {
     const a = crearPartido();
     const { _gen, rng, sembrar, ...datos } = a;
     expect(() => JSON.stringify(datos)).not.toThrow();
+  });
+
+  // --- LA VISTA NO PUEDE TOCAR LA SIMULACIÓN ---
+  it('animar a un jugador no cambia una sola cifra de su estado', () => {
+    reiniciarPatadas();
+    const p = maniqui();
+    const antes = JSON.stringify([p.pos.toArray(), p.vel.toArray(), p.facing,
+                                  p.stamina, p.stunTimer, p.sliding, p.heading]);
+    anotarPatadas([{ tipo:'PATADA', playerId: p.playerId }]);
+    for(let i=0;i<30;i++) syncPlayerView(p, 1/60, null, { x:0, y:0.16, z:0 });
+    const despues = JSON.stringify([p.pos.toArray(), p.vel.toArray(), p.facing,
+                                    p.stamina, p.stunTimer, p.sliding, p.heading]);
+    expect(despues).toBe(antes);
+  });
+
+  it('el gesto de patada empieza atrás, cruza y se apaga solo', () => {
+    reiniciarPatadas();
+    const p = maniqui();
+    p.vel.set(0,0,0);                       // parado: sólo se ve el golpeo
+    anotarPatadas([{ tipo:'PATADA', playerId: p.playerId }]);
+    const muslo = [];
+    for(let i=0;i<30;i++){ syncPlayerView(p, 1/60); muslo.push(p.rLeg.rotation.x); }
+    expect(Math.min(...muslo)).toBeLessThan(-0.8);      // arma hacia atrás
+    expect(Math.max(...muslo)).toBeGreaterThan(1.0);    // cruza hacia adelante
+    expect(Math.abs(muslo[muslo.length-1])).toBe(0);    // y termina: 0.36 s y fuera
+  });
+
+  it('quieto no hay zancada: nadie marcha en el sitio', () => {
+    reiniciarPatadas();
+    const p = maniqui();
+    p.vel.set(0,0,0);
+    for(let i=0;i<20;i++) syncPlayerView(p, 1/60);
+    expect(Math.abs(p.lLeg.rotation.x)).toBeLessThan(1e-9);
+    expect(Math.abs(p.rLeg.rotation.x)).toBeLessThan(1e-9);
+  });
+
+  it('la cabeza gira hacia el balón y no se sale de la nuca', () => {
+    reiniciarPatadas();
+    const p = maniqui();
+    p.vel.set(0,0,0); p.facing = 0;
+    for(let i=0;i<120;i++) syncPlayerView(p, 1/60, null, { x:20, y:0.16, z:0 });
+    expect(p.cabeza.rotation.y).toBeGreaterThan(0.5);   // el balón está a su izquierda
+    expect(Math.abs(p.cabeza.rotation.y)).toBeLessThanOrEqual(0.95);
   });
 });

@@ -163,6 +163,11 @@ Conecta el mando y pulsa cualquier botón para que el juego lo detecte
   4-3-3, 4-4-2, 3-5-2 y 5-3-2.
 - **Presión**: siempre hay un jugador presionando; si controlas al más cercano,
   un compañero sale a presionar por ti.
+- **Marcaje individual**: defendiendo en campo propio, dos defensas se reparten
+  a los dos rivales más adelantados y se colocan a unos tres metros, entre el
+  rival y su propia portería. Medido sobre 12 partidos de IA vs IA: el punta
+  queda suelto un 10,7 % del tiempo en vez de un 15,2 %, con el defensa por
+  delante el 58,7 % de las veces en vez del 53,9 %.
 
 ## 🎬 Cinemáticas
 
@@ -196,7 +201,10 @@ Conecta el mando y pulsa cualquier botón para que el juego lo detecte
 
 - Estadio nocturno con gradas, multitud, torres de luz y cielo estrellado.
 - Césped con franjas de corte, líneas reglamentarias, áreas y arcos con red.
-- 22 jugadores con equipación por colores, dorsal y animación de carrera procedural.
+- 22 jugadores con equipación por colores, dorsal y animación procedural:
+  zancada que cambia de cadencia con la velocidad, cuerpo que se inclina al
+  correr, respiración al estar parado, cabeza que sigue al balón y gesto
+  completo de golpeo (armar, pegar y acompañar) con pierna buena por dorsal.
 - Físicas de balón: gravedad, rebote, fricción de césped y arrastre de aire.
 - IA por roles (POR/DEF/MED/DEL), formación 4-3-3, portero que achica.
 - Pase inteligente al compañero mejor ubicado, tiro a puerta, robo/entrada.

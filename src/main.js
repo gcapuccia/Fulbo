@@ -21,7 +21,8 @@ import { crearReplayView }                    from './render/replayView.js';
 import { tickTimers }                         from './core/systems/movement.js';
 import { playerId, jugadorDeAsiento, esHumano, asignarControl as asignarControlSeat }
                                               from './core/systems/seats.js';
-import { syncPlayerView }                     from './render/playerView.js';
+import { syncPlayerView, anotarPatadas, reiniciarPatadas }
+                                                 from './render/playerView.js';
 import { binds, guardarBinds, restaurarBinds, nombreTecla, ACCIONES }
                                               from './config/binds.js';
 import { perfil, setApodo, contarPartido }    from './app/perfil.js';
@@ -238,12 +239,17 @@ class Player {
     // cuello
     const cuello = new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.15,0.18,8), skin);
     cuello.position.y=2.20; g.add(cuello);
-    // cabeza
+    // cabeza: va en su propio grupo, con el pivote en el cuello, para que la
+    // vista pueda girarla hacia el balón sin mover el resto del cuerpo
+    const CUELLO_Y = 2.26;
+    const cabeza = new THREE.Group(); cabeza.position.y = CUELLO_Y;
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.26,16,14), skin);
-    head.position.y=2.44; head.scale.set(0.92,1.06,0.98); head.castShadow=true; g.add(head);
+    head.position.y=2.44-CUELLO_Y; head.scale.set(0.92,1.06,0.98); head.castShadow=true;
     const hair = new THREE.Mesh(new THREE.SphereGeometry(0.272,14,12,0,Math.PI*2,0,Math.PI*0.62),
       new THREE.MeshStandardMaterial({color:PELOS[(Math.random()*PELOS.length)|0],roughness:.95}));
-    hair.position.y=2.47; hair.scale.set(0.95,1.08,1.0); g.add(hair);
+    hair.position.y=2.47-CUELLO_Y; hair.scale.set(0.95,1.08,1.0);
+    cabeza.add(head, hair); g.add(cabeza);
+    this.cabeza = cabeza;
 
     // brazos con antebrazo y mano
     const brazoGeo = new THREE.CapsuleGeometry(0.115,0.34,3,8);
@@ -813,7 +819,7 @@ function kickBall(from, dirVec, power, lift){
   if(m.S._owner){ m.S._owner.hasBall=false; m.S._owner=null; }
   // el saque de centro se considera ejecutado en cuanto se toca el balón
   if(m.S.phase==='kickoff'){ m.S.kickoffTaken=true; m.S.phase='play'; m.S.phaseT=0; }
-  emitir('PATADA');
+  emitir('PATADA', { playerId: from.playerId });
 }
 
 // pase al compañero mejor ubicado hacia el ataque
@@ -889,6 +895,10 @@ function updateAI(dt){
     const presiona = nuestra ? null : (orden[0] || null);   // va al balón
     const apoya    = nuestra ? null : (orden[1] || null);   // cubre y corta el pase
     const acompana = nuestra ? (orden[0] || null) : null;   // se ofrece para el pase
+    // Sólo se marca cuando de verdad se defiende: con el balón en nuestro
+    // campo. En la mitad de arriba el bloque zonal basta y deja jugar.
+    const defendiendo = !nuestra && Math.abs(m.bola.pos.z - (ti===0 ? -HALF_L : HALF_L)) < 42;
+    const marcas = defendiendo ? asignarMarcas(ti, presiona, apoya) : null;
 
     for(const p of m.teams[ti]){
       if(p.ownerSeat!=null){ continue; }   // lo mueve una persona, no la IA
@@ -938,6 +948,11 @@ function updateAI(dt){
         clampToField(_v2);
         desired.copy(_v2).sub(p.pos);
         maxSpd = baseSpeed(p) * 0.92;
+      } else if(marcas && marcas.has(p.playerId)){
+        // marcaje individual: pegado a su rival, del lado de su propia portería
+        posicionDeMarca(p, marcas.get(p.playerId), _v2);
+        desired.copy(_v2).sub(p.pos);
+        maxSpd = baseSpeed(p) * diff.ai * 0.94;
       } else {
         posicionDeBloque(p, _v2);
         desired.copy(_v2).sub(p.pos);
@@ -970,6 +985,63 @@ function ordenPorCercania(ti){
   const arr = m.teams[ti].filter(j => !j.isGK && j.ownerSeat==null && j.stunTimer<=0);
   arr.sort((a,b) => distXZ(a.pos,m.bola.pos) - distXZ(b.pos,m.bola.pos));
   return arr;
+}
+
+// MARCAJE INDIVIDUAL.
+// Antes sólo había presión por cercanía y bloque zonal: los rivales SIN balón
+// quedaban sueltos y bastaba un pase para dejar a todo el equipo atrás. Ahora,
+// defendiendo en campo propio, dos defensas se reparten a los dos rivales más
+// adelantados y se colocan entre ellos y su propia portería.
+// El reparto se hace UNA vez por equipo y tick, y sólo mira posiciones: es
+// determinista, así que el golden master sigue valiendo como oráculo.
+function asignarMarcas(ti, presiona, apoya){
+  const dir = ti===0 ? 1 : -1;                 // hacia dónde ataca ESTE equipo
+  const propiaZ = -dir * HALF_L;               // nuestra propia portería
+  const marcas = new Map();
+  // Sólo es peligro quien ya está metido en nuestro campo.
+  const rivales = m.teams[1-ti]
+    .filter(o => !o.isGK && !o.expelled && Math.abs(o.pos.z - propiaZ) < 46)
+    .sort((a,b) => (a.pos.z*dir) - (b.pos.z*dir));
+  // Marcan los defensas. Si los medios marcan también, el equipo se descuelga
+  // entero detrás de rivales y el partido se muere (medido abajo).
+  // El que presiona y el que apoya ya tienen tarea: no se les asigna marca.
+  const mios = m.teams[ti].filter(p =>
+    !p.isGK && !p.expelled && p.ownerSeat==null && p!==presiona && p!==apoya
+    && p.role==='DEF');
+
+  // BALANCE MEDIDO (12 semillas x 200 s de IA vs IA, más una sonda que mira
+  // cuánto cubren a los dos rivales más adelantados):
+  //             goles  tiros  % punta suelto (>10 m)  dist. media  % por delante
+  //   sin marca  2.42  10.33         15.2 %              4.91 m       53.9 %
+  //   3 marcas   1.50   9.50          —                    —            —
+  //   2 a 4.6 m  2.33   9.92         25.2 %              5.86 m       49.0 %
+  //   2 a 2.8 m  2.00   9.83         10.7 %              3.87 m       58.7 %  <-
+  // Marcar a tres deja al equipo entero corriendo detrás de rivales y el
+  // partido acaba 0-0. Y marcar de lejos (4.6 m) es PEOR que no marcar: saca a
+  // los defensas del bloque sin llegar a tapar a nadie.
+  const tomados = new Set();
+  for(const r of rivales){
+    let mejor=null, bd=Infinity;
+    for(const p of mios){
+      if(tomados.has(p.playerId)) continue;
+      const d = distXZ(p.pos, r.pos);
+      if(d < bd){ bd = d; mejor = p; }
+    }
+    if(mejor && bd < 26){ marcas.set(mejor.playerId, r); tomados.add(mejor.playerId); }
+    if(marcas.size >= 2) break;              // sólo dos marcadores: ver nota de balance
+  }
+  return marcas.size ? marcas : null;
+}
+
+// Dónde se pone un marcador: entre su rival y su propia portería, y algo
+// hacia el lado del balón para poder cortar el pase.
+function posicionDeMarca(p, rival, out){
+  const dir = p.team===0 ? 1 : -1;
+  out.set(rival.pos.x, 0, rival.pos.z);
+  out.z -= dir * 2.8;                          // casi tres metros, del lado del arco
+  out.x += (m.bola.pos.x - rival.pos.x) * 0.22;
+  clampToField(out);
+  return out;
 }
 
 // Posición objetivo de un jugador SIN balón.
@@ -1215,7 +1287,7 @@ function slideTackle(p){
     m.bola.vel.set(dir.x*11, 1.3, dir.z*11);
     m.bola.kickLock=0.28; m.lastTouch=p.team;
     if(m.S._owner){ m.S._owner.hasBall=false; m.S._owner=null; }
-    m.S.possession=p.team; emitir('PATADA');
+    m.S.possession=p.team; emitir('PATADA', { playerId: p.playerId });
   } else if(victim && dv<2.5){
     commitFoul(p, victim);   // se lleva al rival por delante -> falta
   }
@@ -1509,7 +1581,9 @@ function animate(){
     while(m.acumulador >= DT && pasos < MAX_PASOS){ stepSim(DT); m.acumulador -= DT; pasos++; }
     if(pasos === MAX_PASOS) m.acumulador = 0;   // se descarta el atraso en vez de acumularlo
     // --- presentación: a la tasa del monitor, no del simulador ---
-    presentar(drenarEventos());        // los eventos del tick se vuelven imagen y sonido
+    // los eventos del tick se vuelven imagen y sonido; de paso la vista se
+    // entera de quién ha pegado para animar el golpeo
+    presentar(anotarPatadas(drenarEventos()));
 
     // --- REPETICIÓN: sólo vista. Graba instantáneas y las dibuja aparte ---
     const enJuego = m.S.phase==='play' || m.S.phase==='kickoff' || m.S.phase==='falta';
@@ -1524,7 +1598,9 @@ function animate(){
     }
 
     for(let ti=0;ti<2;ti++)for(const p of m.teams[ti]){
-      syncPlayerView(p, frameDt, posesRepeticion ? posesRepeticion.poses.get(p.playerId) : null);
+      syncPlayerView(p, frameDt,
+        posesRepeticion ? posesRepeticion.poses.get(p.playerId) : null,
+        posesRepeticion ? posesRepeticion.bola : m.bola.pos);   // la cabeza mira al balón
     }
     syncBallView(frameDt, posesRepeticion ? posesRepeticion.bola : null);
     updateConfetti(frameDt);
@@ -1708,6 +1784,7 @@ function startMatch(){
   spawnTeams();
   m.S.score=[0,0]; m.S.clock=0; m.S.half=1; m.lastScorer=null;
   m.cards[0]={a:0,r:0}; m.cards[1]={a:0,r:0}; m.S.setPiece=null; limpiarEventos();
+  reiniciarPatadas();          // que no arranque nadie con un golpeo del partido anterior
   replayView.detener();     // el buffer de repetición no debe cruzar partidos
   if(!m.S.humans.length) crearHumanos(m.S.numHumanos);
   m.S.humans.forEach(h=>{ h.playerId=null; });
