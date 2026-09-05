@@ -15,3 +15,7 @@ export const DISPOSITIVOS = [
   {id:'pad0', nombre:'Mando 1'}, {id:'pad1', nombre:'Mando 2'},
   {id:'pad2', nombre:'Mando 3'}, {id:'pad3', nombre:'Mando 4'},
 ];
+
+// Cuánto dura la fase de gol antes del saque de centro. La celebración y la
+// repetición se muestran DENTRO de esa ventana, pero no la controlan.
+export const GOL_ESPERA = 8.0;

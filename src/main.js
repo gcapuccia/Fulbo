@@ -11,12 +11,13 @@ import { FORMACIONES, NOMBRES_FORM, FORMATION } from './config/formations.js';
 import { F, HALF_W, HALF_L, GOAL_W, GOAL_H, GOAL_DEPTH, BALL_R, CIRCULO }
                                               from './config/field.js';
 import { DT, MAX_PASOS, DIFF, SPRINT_MUL, TOQUE_MAX, CAPTURA, SP_LABEL,
-         REPLAY_SEC, REPLAY_HZ, REPLAY_SPEED, COLORES_HUMANO, DISPOSITIVOS }
+         REPLAY_SEC, REPLAY_HZ, REPLAY_SPEED, COLORES_HUMANO, DISPOSITIVOS, GOL_ESPERA }
                                               from './config/rules.js';
 // --- Núcleo ---
 import { Vec3 }                               from './core/math.js';
 import { emitir, drenarEventos, limpiarEventos } from './core/events.js';
 import { crearPresentador }                   from './ui/presenter.js';
+import { crearReplayView }                    from './render/replayView.js';
 import { tickTimers }                         from './core/systems/movement.js';
 import { playerId, jugadorDeAsiento, esHumano, asignarControl as asignarControlSeat }
                                               from './core/systems/seats.js';
@@ -564,14 +565,15 @@ function updateBall(dt){
 
 // La malla del balón sigue al estado. Es VISTA: rotación, sombra proyectada
 // y opacidad según la altura. El núcleo no sabe que existe.
-function syncBallView(dt){
+function syncBallView(dt, pose){
   const m=G.ball; if(!m) return;
-  m.position.set(bola.pos.x, bola.pos.y, bola.pos.z);
+  const b = pose || bola.pos;
+  m.position.set(b.x, b.y, b.z);
   m.rotation.x += bola.vel.z*dt*0.9;
   m.rotation.z -= bola.vel.x*dt*0.9;
   const blob=m.userData.blob;
-  blob.position.set(bola.pos.x, 0.02, bola.pos.z);
-  const h=Math.max(0, bola.pos.y-bola.r);
+  blob.position.set(b.x, 0.02, b.z);
+  const h=Math.max(0, b.y-bola.r);
   blob.scale.setScalar(1+h*0.25);
   blob.material.opacity=Math.max(0.05, 0.3-h*0.03);
 }
@@ -1215,55 +1217,21 @@ function slideTackle(p){
 // ---------------------------------------------------------------------------
 //  REPETICIÓN DE GOL (buffer circular + cámara lenta)
 // ---------------------------------------------------------------------------
-const replay = { frames:[], max:Math.round(REPLAY_SEC*REPLAY_HZ), acc:0, idx:0, t:0 };
+// La repetición vive ahora en render/replayView.js: guarda instantáneas y las
+// dibuja aparte. La simulación NO sabe que existe.
+const replayView = crearReplayView({ segundos: REPLAY_SEC, hz: REPLAY_HZ, velocidad: REPLAY_SPEED });
+let posesRepeticion = null;      // poses a dibujar mientras dura la repetición
 
-function recordReplay(dt){
-  replay.acc += dt;
-  if(replay.acc < 1/REPLAY_HZ) return;
-  replay.acc = 0;
-  const f = { b:[bola.pos.x, bola.pos.y, bola.pos.z], l:[] };
-  for(const arr of teams) for(const pl of arr) f.l.push({pl, x:pl.pos.x, z:pl.pos.z, fa:pl.facing});
-  replay.frames.push(f);
-  if(replay.frames.length > replay.max) replay.frames.shift();
-}
-function startReplay(){
-  if(replay.frames.length < 8){ endReplay(); return; }
-  S.phase='replay'; S.phaseT=0; replay.idx=0; replay.t=0;
-  document.getElementById('replayFx').classList.add('show');
-}
-// devuelve false cuando termina
-function playReplay(dt){
-  const fr=replay.frames;
-  replay.t += dt*REPLAY_HZ*REPLAY_SPEED;
-  const i = Math.floor(replay.t);
-  if(i >= fr.length-1) return false;
-  const f=fr[i], g=fr[i+1], a=replay.t-i;      // interpolación entre fotogramas
-  bola.pos.set(f.b[0]+(g.b[0]-f.b[0])*a, f.b[1]+(g.b[1]-f.b[1])*a, f.b[2]+(g.b[2]-f.b[2])*a);
-  G.ball.userData.blob.position.set(bola.pos.x,0.02,bola.pos.z);
-  const dtE = Math.max(dt,1e-4);
-  for(let k=0;k<f.l.length;k++){
-    const e=f.l[k], e2=g.l[k]; if(!e||!e2||e.pl!==e2.pl) continue;
-    const nx=e.x+(e2.x-e.x)*a, nz=e.z+(e2.z-e.z)*a;
-    e.pl.vel.set((nx-e.pl.pos.x)/dtE, 0, (nz-e.pl.pos.z)/dtE);  // para la animación de carrera
-    e.pl.pos.set(nx,0,nz); e.pl.facing=e.fa;
-  }
-  return true;
-}
-function endReplay(){
-  document.getElementById('replayFx').classList.remove('show');
-  replay.frames.length=0;
-  placeKickoff( G.lastScorer!=null ? 1-G.lastScorer : (S.score[0]>S.score[1]?1:0) );
-  S.phase='kickoff'; S.phaseT=0;
-}
 // cámara cinematográfica de repetición: baja, detrás del arco, en travelling
 function replayCamera(dt){
   const gz = (G.lastScorer===0? HALF_L : -HALF_L);
   const s = Math.sign(gz);
-  const t = replay.t/REPLAY_HZ;
+  const t = replayView.avance * REPLAY_SEC;
   const ang = -0.5 + t*0.30;
   G.camera.position.lerp(_vc.set(Math.sin(ang)*22, 4.5+t*0.8, gz + s*(14 - t*1.2)), Math.min(1,dt*3));
   if(Math.abs(G.camera.fov-34)>0.02){ G.camera.fov=34; G.camera.updateProjectionMatrix(); }
-  G.camera.lookAt(bola.pos.x*0.7, 1.3, bola.pos.z*0.95);
+  const b = posesRepeticion ? posesRepeticion.bola : bola.pos;
+  G.camera.lookAt(b.x*0.7, 1.3, b.z*0.95);
 }
 
 // ---------------------------------------------------------------------------
@@ -1292,7 +1260,7 @@ const AIM_X = (()=>{
 })();
 function updateCamera(dt){
   G.camCalls++;
-  if(S.phase==='replay'){ replayCamera(dt); return; }   // cámara cinematográfica
+  if(posesRepeticion){ replayCamera(dt); return; }       // cámara cinematográfica
   camTarget.lerp(bola.pos, Math.min(1,dt*2.6));
   // encuadre más cerrado en saques y jugadas paradas (dramatismo)
   const objetivo = (S.phase==='kickoff'||S.phase==='setpiece') ? 50 : VIEW_LEN;
@@ -1401,9 +1369,12 @@ function updatePhase(dt){
   } else if(S.phase==='full'){
     if(S.phaseT > 5) cerrarPartido();      // 5 s medidos en ticks, no en reloj de pared
   } else if(S.phase==='goal'){
-    if(S.phaseT>2.6) startReplay();          // celebración -> repetición
-  } else if(S.phase==='replay'){
-    if(!playReplay(dt)) endReplay();          // al terminar -> saque de centro
+    // La simulación sólo ESPERA. Qué se muestra durante esa espera (celebración,
+    // repetición) es cosa de la vista: el partido ya no depende de una animación.
+    if(S.phaseT > GOL_ESPERA){
+      placeKickoff( G.lastScorer!=null ? 1-G.lastScorer : (S.score[0]>S.score[1]?1:0) );
+      S.phase='kickoff'; S.phaseT=0;
+    }
   } else if(S.phase==='play'){
     S.clock+=dt;
     if(S.clock>=S.halfLen){
@@ -1503,13 +1474,11 @@ function stepSim(dt){
     enforceKickoffRule();
     tryPossession(dt);
     updateBall(dt);
-    recordReplay(dt);
   } else if(S.phase==='falta'){
     // la jugada se sigue viendo, pero nadie toma el balón: queda suelto
     updateHumans(dt);
     updateAI(dt);
     updateBall(dt);
-    recordReplay(dt);
   } else if(S.phase==='setpiece'){
     // cualquier humano del equipo que saca puede ejecutar antes con pase/tiro
     if(S.setPiece){
@@ -1534,8 +1503,23 @@ function animate(){
     if(pasos === MAX_PASOS) G.acumulador = 0;   // se descarta el atraso en vez de acumularlo
     // --- presentación: a la tasa del monitor, no del simulador ---
     presentar(drenarEventos());        // los eventos del tick se vuelven imagen y sonido
-    for(let ti=0;ti<2;ti++)for(const p of teams[ti]) syncPlayerView(p, frameDt);
-    syncBallView(frameDt);
+
+    // --- REPETICIÓN: sólo vista. Graba instantáneas y las dibuja aparte ---
+    const enJuego = S.phase==='play' || S.phase==='kickoff' || S.phase==='falta';
+    if(enJuego) replayView.grabar(teams, bola, frameDt);
+    if(S.phase==='goal' && S.phaseT > 2.6 && !replayView.activa && replayView.listo){
+      if(replayView.iniciar()) document.getElementById('replayFx').classList.add('show');
+    }
+    posesRepeticion = replayView.activa ? replayView.poses(frameDt) : null;
+    if(!posesRepeticion && !replayView.activa){
+      document.getElementById('replayFx').classList.remove('show');
+      if(enJuego === false && S.phase!=='goal') replayView.detener();
+    }
+
+    for(let ti=0;ti<2;ti++)for(const p of teams[ti]){
+      syncPlayerView(p, frameDt, posesRepeticion ? posesRepeticion.poses.get(p.playerId) : null);
+    }
+    syncBallView(frameDt, posesRepeticion ? posesRepeticion.bola : null);
     updateConfetti(frameDt);
     updateCrowd(frameDt);
     updateCamera(frameDt);
@@ -1717,7 +1701,7 @@ function startMatch(){
   spawnTeams();
   S.score=[0,0]; S.clock=0; S.half=1; G.lastScorer=null;
   cards[0]={a:0,r:0}; cards[1]={a:0,r:0}; S.setPiece=null; limpiarEventos();
-  replay.frames.length=0;   // el buffer guarda referencias a los Player del partido anterior
+  replayView.detener();     // el buffer de repetición no debe cruzar partidos
   if(!S.humans.length) crearHumanos(S.numHumanos);
   S.humans.forEach(h=>{ h.playerId=null; });
   setupHUDTeams(); updateCardsUI(); buildStaminaUI();
@@ -1839,7 +1823,7 @@ function boot(){
       teams[0]=[]; teams[1]=[]; spawnTeams();
       S.score=[0,0]; S.clock=0; S.half=1; G.lastScorer=null;
       cards[0]={a:0,r:0}; cards[1]={a:0,r:0}; S.setPiece=null;
-      replay.frames.length=0; replay.acc=0; replay.t=0; replay.idx=0;
+      replayView.detener();
       G.goalCooldown=0; G.acumulador=0; G.simTick=0;
       G.lastTouch=-1; G.offsidePend=null; G.passReceiver=null;
       S._owner=null; S.possession=0;
@@ -1898,7 +1882,7 @@ function boot(){
       teams[0]=[]; teams[1]=[]; spawnTeams();
       S.score=[0,0]; S.clock=0; S.half=1; G.lastScorer=null;
       cards[0]={a:0,r:0}; cards[1]={a:0,r:0}; S.setPiece=null;
-      replay.frames.length=0; replay.acc=0; replay.t=0; replay.idx=0;
+      replayView.detener();
       G.goalCooldown=0; G.acumulador=0; G.simTick=0;
       G.lastTouch=-1; G.offsidePend=null; G.passReceiver=null;
       S._owner=null; S.possession=0; resetEstad();

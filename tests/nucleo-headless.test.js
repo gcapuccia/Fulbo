@@ -9,6 +9,7 @@ import { tickTimers } from '../src/core/systems/movement.js';
 import { playerId, asignarControl, jugadorDeAsiento, esHumano, liberarAsiento }
   from '../src/core/systems/seats.js';
 import { emitir, drenarEventos, limpiarEventos } from '../src/core/events.js';
+import { tomarSnapshot, interpolarSnapshot } from '../src/core/snapshot.js';
 
 describe('núcleo headless', () => {
   it('no existe document ni WebGL en este entorno', () => {
@@ -177,5 +178,58 @@ describe('buzón de eventos', () => {
 
   it('un tick sin novedades no genera basura', () => {
     expect(drenarEventos()).toEqual([]);
+  });
+});
+
+// Fase 4f: la repetición deja de mutar el modelo y su buffer es el paquete de red.
+describe('instantáneas', () => {
+  const mundo = () => {
+    const mk = (team, i) => ({ playerId: team*100 + i, pos: new Vec3(i, 0, team*10), facing: 0.5 });
+    return [ Array.from({length:3}, (_,i)=>mk(0,i)), Array.from({length:3}, (_,i)=>mk(1,i)) ];
+  };
+  const bolita = { pos: new Vec3(1, 0.16, 2) };
+
+  it('la instantánea son sólo números: viaja por red tal cual', () => {
+    const s = tomarSnapshot(mundo(), bolita);
+    expect(s.j.every(v => typeof v === 'number')).toBe(true);
+    expect(s.b.every(v => typeof v === 'number')).toBe(true);
+    expect(() => JSON.stringify(s)).not.toThrow();
+    expect(JSON.parse(JSON.stringify(s))).toEqual(s);
+  });
+
+  it('guarda cuatro valores por jugador, indexados por playerId', () => {
+    const teams = mundo();
+    const s = tomarSnapshot(teams, bolita);
+    expect(s.j).toHaveLength(6 * 4);
+    expect(s.j[0]).toBe(teams[0][0].playerId);
+  });
+
+  it('NO guarda referencias a los jugadores — ése era el fallo original', () => {
+    const teams = mundo();
+    const s = tomarSnapshot(teams, bolita);
+    const antes = teams[0][0].pos.x;
+    s.j[1] = 999;                       // manipular la instantánea...
+    expect(teams[0][0].pos.x).toBe(antes);   // ...no toca el partido
+  });
+
+  it('interpola posiciones entre dos instantáneas', () => {
+    const teams = mundo();
+    const s1 = tomarSnapshot(teams, bolita);
+    teams[0][0].pos.x = 10;
+    bolita.pos.x = 5;
+    const s2 = tomarSnapshot(teams, bolita);
+    const medio = interpolarSnapshot(s1, s2, 0.5);
+    expect(medio.poses.get(teams[0][0].playerId).x).toBeCloseTo(5, 6);
+    expect(medio.bola.x).toBeCloseTo(3, 6);
+  });
+
+  it('sobrevive a que un jugador desaparezca entre instantáneas (expulsión)', () => {
+    const teams = mundo();
+    const s1 = tomarSnapshot(teams, bolita);
+    teams[0].splice(1, 1);                    // se va uno
+    const s2 = tomarSnapshot(teams, bolita);
+    expect(() => interpolarSnapshot(s1, s2, 0.5)).not.toThrow();
+    const r = interpolarSnapshot(s1, s2, 0.5);
+    expect(r.poses.has(teams[0][0].playerId)).toBe(true);
   });
 });

@@ -5,11 +5,21 @@
 // `runPhase` vive en el jugador pero sólo lo toca este archivo (es la fase del
 // ciclo de zancada) y por eso NO entra en el hash de estado ni en el snapshot.
 
-/** Sincroniza las mallas de un jugador con su estado. */
-export function syncPlayerView(p, dt){
-  const speed = p.vel.length();
-  p.mesh.rotation.y = p.facing;
-  p.mesh.position.set(p.pos.x, 0, p.pos.z);
+/**
+ * Sincroniza las mallas de un jugador con su estado.
+ * `pose` opcional: si viene (repetición de gol), se dibuja ESA posición en vez
+ * de la del partido, sin tocar el estado autoritativo.
+ */
+export function syncPlayerView(p, dt, pose){
+  const x = pose ? pose.x : p.pos.x;
+  const z = pose ? pose.z : p.pos.z;
+  const facing = pose ? pose.facing : p.facing;
+  // en la repetición la cadencia sale del desplazamiento dibujado, no de p.vel
+  const speed = pose
+    ? Math.hypot(x - p.mesh.position.x, z - p.mesh.position.z) / Math.max(dt, 1e-4)
+    : p.vel.length();
+  p.mesh.rotation.y = facing;
+  p.mesh.position.set(x, 0, z);
 
   // ciclo de carrera: la cadencia sube con la velocidad
   const cadence = Math.min(speed*1.1, 14);
