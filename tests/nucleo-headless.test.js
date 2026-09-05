@@ -6,6 +6,8 @@ import { Vec3 } from '../src/core/math.js';
 import { rng, sembrar, suavizado } from '../src/core/rng.js';
 import { S, teams, cards, bola } from '../src/core/state.js';
 import { tickTimers } from '../src/core/systems/movement.js';
+import { playerId, asignarControl, jugadorDeAsiento, esHumano, liberarAsiento }
+  from '../src/core/systems/seats.js';
 
 describe('núcleo headless', () => {
   it('no existe document ni WebGL en este entorno', () => {
@@ -85,3 +87,68 @@ describe('núcleo headless', () => {
       expect(p.heading).toBeLessThanOrEqual(0);
     });
   });
+
+// Fase 4d: el vínculo persona-jugador es estado SERIALIZABLE, no referencias.
+describe('asientos', () => {
+  const mundo = () => {
+    const mk = (team, i) => ({ playerId: playerId(team, i), ownerSeat: null,
+      isGK: i === 0, expelled: false, num: i + 1 });
+    const teams = [
+      Array.from({ length: 11 }, (_, i) => mk(0, i)),
+      Array.from({ length: 11 }, (_, i) => mk(1, i)),
+    ];
+    return { teams, a: { seatId: 0, team: 0, playerId: null },
+                    b: { seatId: 1, team: 0, playerId: null } };
+  };
+
+  it('los identificadores son estables y no chocan entre equipos', () => {
+    expect(playerId(0, 9)).toBe(9);
+    expect(playerId(1, 9)).toBe(109);
+    expect(playerId(0, 9)).not.toBe(playerId(1, 9));
+  });
+
+  it('asignar control enlaza en los dos sentidos por ID', () => {
+    const { teams, a } = mundo();
+    const p = teams[0][9];
+    expect(asignarControl(teams, a, p)).toBe(true);
+    expect(a.playerId).toBe(p.playerId);
+    expect(p.ownerSeat).toBe(a.seatId);
+    expect(jugadorDeAsiento(teams, a)).toBe(p);
+    expect(esHumano(p)).toBe(true);
+  });
+
+  it('cambiar de jugador libera al anterior', () => {
+    const { teams, a } = mundo();
+    const p1 = teams[0][9], p2 = teams[0][8];
+    asignarControl(teams, a, p1);
+    asignarControl(teams, a, p2);
+    expect(p1.ownerSeat).toBeNull();
+    expect(p2.ownerSeat).toBe(a.seatId);
+  });
+
+  it('NO se le puede robar el jugador a otra persona', () => {
+    const { teams, a, b } = mundo();
+    const p = teams[0][9];
+    asignarControl(teams, a, p);
+    expect(asignarControl(teams, b, p)).toBe(false);   // b intenta quedárselo
+    expect(p.ownerSeat).toBe(a.seatId);                // sigue siendo de a
+    expect(b.playerId).toBeNull();
+  });
+
+  it('el estado es SERIALIZABLE — antes el ciclo rompía JSON.stringify', () => {
+    const { teams, a } = mundo();
+    asignarControl(teams, a, teams[0][9]);
+    expect(() => JSON.stringify(a)).not.toThrow();
+    expect(() => JSON.stringify(teams)).not.toThrow();
+  });
+
+  it('liberar el asiento deja al jugador para la IA', () => {
+    const { teams, a } = mundo();
+    const p = teams[0][9];
+    asignarControl(teams, a, p);
+    liberarAsiento(teams, a);
+    expect(p.ownerSeat).toBeNull();
+    expect(a.playerId).toBeNull();
+    expect(esHumano(p)).toBe(false);
+  });
+});

@@ -16,6 +16,8 @@ import { DT, MAX_PASOS, DIFF, SPRINT_MUL, TOQUE_MAX, CAPTURA, SP_LABEL,
 // --- Núcleo ---
 import { Vec3 }                               from './core/math.js';
 import { tickTimers }                         from './core/systems/movement.js';
+import { playerId, jugadorDeAsiento, esHumano, asignarControl as asignarControlSeat }
+                                              from './core/systems/seats.js';
 import { syncPlayerView }                     from './render/playerView.js';
 import { binds, guardarBinds, restaurarBinds, nombreTecla, ACCIONES }
                                               from './config/binds.js';
@@ -201,7 +203,8 @@ class Player {
     this.slideCd = 0; this.sliding = 0; this.heading = 0;
     this.holdTimer = 0;   // portero reteniendo el balón
     this.yellow = 0; this.expelled = false;
-    this.humanOwner = null;   // qué persona lo controla (null = IA)
+    this.ownerSeat = null;    // seatId de la persona que lo maneja (null = IA)
+    this.playerId = 0;        // identificador estable: 100*equipo + puesto
     this.isGK = role==='POR';
     this.build(kit);
   }
@@ -380,6 +383,7 @@ function spawnTeams(){
     const forma = FORMACIONES[S.formation[ti]] || FORMATION;
     forma.forEach((f,i)=>{
       const p = new Player(ti, f.r, i===0?1:i+1, kit);
+      p.playerId = playerId(ti, i);      // identificador estable para la red
       p.formation = f;
       teams[ti].push(p);
       names[ti].push(NOMBRES[(i + ti*7)%NOMBRES.length]);
@@ -471,24 +475,21 @@ function nearestToBall(ti){
 
 function refreshRings(){
   for(const arr of teams) for(const p of arr){
-    const h = p.humanOwner;
-    p.ring.visible = !!h;
-    if(h) p.ring.material.color.set(h.color);
+    const asiento = p.ownerSeat != null ? S.humans.find(x=>x.seatId===p.ownerSeat) : null;
+    p.ring.visible = !!asiento;
+    if(asiento) p.ring.material.color.set(asiento.color);
   }
 }
 // asigna a un humano el control de un jugador (liberando el anterior)
 function asignarControl(h, p){
-  if(!p || p.humanOwner===h) { if(p) h.controlled=p; return; }
-  if(h.controlled) h.controlled.humanOwner=null;
-  if(p.humanOwner) p.humanOwner.controlled=null;   // se lo quita a otro humano
-  h.controlled=p; p.humanOwner=h;
+  asignarControlSeat(teams, h, p);
 }
 // jugador del equipo más cercano al balón que no lleve ya otro humano
 function masCercanoLibre(team, h){
   let best=null, bd=1e9;
   for(const p of teams[team]){
     if(p.isGK) continue;
-    if(p.humanOwner && p.humanOwner!==h) continue;
+    if(p.ownerSeat != null && p.ownerSeat !== h.seatId) continue;
     const d=p.pos.distanceToSquared(bola.pos);
     if(d<bd){bd=d;best=p;}
   }
@@ -499,11 +500,11 @@ function asignarPosicionesIniciales(){
   for(const h of S.humans){
     const arr=teams[h.team];
     const p = arr[h.slot] || arr[9] || arr[1];
-    asignarControl(h, p);
+    if(p){ p.ownerSeat = null; asignarControl(h, p); }
   }
   refreshRings();
 }
-function humanoDe(p){ return p ? p.humanOwner : null; }
+function humanoDe(p){ return p && p.ownerSeat!=null ? S.humans.find(x=>x.seatId===p.ownerSeat) : null; }
 
 // cambio de formación en caliente (tecla F)
 function setFormation(ti, nombre){
@@ -710,7 +711,8 @@ function commitFoul(offender, victim){
 function sendOff(p){
   p.expelled=true; p.mesh.visible=false;
   const arr=teams[p.team]; const i=arr.indexOf(p); if(i>=0) arr.splice(i,1);
-  if(p.humanOwner){ const h=p.humanOwner; p.humanOwner=null; h.controlled=null;
+  if(p.ownerSeat!=null){ const h=S.humans.find(x=>x.seatId===p.ownerSeat); p.ownerSeat=null;
+    if(h) h.playerId=null;
     asignarControl(h, masCercanoLibre(h.team, h)); refreshRings(); }
 }
 function showCard(card){
@@ -756,7 +758,7 @@ function tryPossession(dt){
     const toque = Math.min(0.50 + sp*0.055 + (owner.sprinting?0.18:0), TOQUE_MAX);
     const target = _v.copy(owner.pos).addScaledVector(dir, toque); target.y=BALL_R;
     // a más velocidad, menos adherencia (control más suelto)
-    const adher = (owner.humanOwner?12:8) * (owner.sprinting?0.6:1.0);
+    const adher = (esHumano(owner)?12:8) * (owner.sprinting?0.6:1.0);
     const relV = b.vel.length();
     if(relV<22){
       bola.pos.lerp(target, Math.min(1, dt*adher));
@@ -769,9 +771,9 @@ function tryPossession(dt){
     S._owner = owner; estad.ticksConDueno++;
     // Si mi equipo recupera el balón, paso a manejar YO a quien lo tiene: si no,
     // seguías controlando a un jugador lejano mientras la jugada iba por otro lado.
-    if(!owner.humanOwner && !owner.isGK){
+    if(owner.ownerSeat==null && !owner.isGK){
       const h = S.humans.find(x => x.team === owner.team);
-      if(h && h.controlled !== owner && S._owner !== h.controlled){
+      if(h && h.playerId !== owner.playerId){
         asignarControl(h, owner); refreshRings();
       }
     }
@@ -821,7 +823,8 @@ function doPass(p){
   const power=Math.min(6+dist*0.7, 30);
   kickBall(p, dir, power, Math.min(dist*0.12,3));
   // si el pasador lo lleva un humano, ese humano pasa a controlar al receptor
-  if(p.humanOwner){ asignarControl(p.humanOwner, best); refreshRings(); G.passReceiver=best; }
+  const hp = humanoDe(p);
+  if(hp){ asignarControl(hp, best); refreshRings(); G.passReceiver=best; }
 }
 // --- FUERA DE JUEGO ---
 // Se evalúa en el instante del pase: el receptor está adelantado si supera al
@@ -874,7 +877,7 @@ function updateAI(dt){
     const acompana = nuestra ? (orden[0] || null) : null;   // se ofrece para el pase
 
     for(const p of teams[ti]){
-      if(p.humanOwner){ continue; }   // lo mueve una persona, no la IA
+      if(p.ownerSeat!=null){ continue; }   // lo mueve una persona, no la IA
       if(p.stunTimer>0){ p.vel.multiplyScalar(0.8); continue; }
       if(p.isGK){ goalkeeper(p, dt); continue; }
 
@@ -950,7 +953,7 @@ function enforceKickoffRule(){
 // Los que lleva una persona no cuentan para los roles de presión: la IA
 // no debe quedarse quieta esperando a que el humano haga todo.
 function ordenPorCercania(ti){
-  const arr = teams[ti].filter(m => !m.isGK && !m.humanOwner && m.stunTimer<=0);
+  const arr = teams[ti].filter(m => !m.isGK && m.ownerSeat==null && m.stunTimer<=0);
   arr.sort((a,b) => distXZ(a.pos,bola.pos) - distXZ(b.pos,bola.pos));
   return arr;
 }
@@ -1082,7 +1085,7 @@ function updateHumans(dt){
   for(const h of S.humans) updateHuman(dt, h);
 }
 function updateHuman(dt, h){
-  const p=h.controlled; if(!p || p.expelled) return;
+  const p=jugadorDeAsiento(teams, h); if(!p || p.expelled) return;
   const input = h.input;
 
   // EN EL SUELO NO SE MANEJA. Sin esto, seguir apretando una dirección mientras
@@ -1362,7 +1365,7 @@ function buildStaminaUI(){
 }
 function updateStaminaUI(){
   for(const h of S.humans){
-    const p=h.controlled; if(!p||!h._bar) continue;
+    const p=jugadorDeAsiento(teams, h); if(!p||!h._bar) continue;
     const pct=Math.round(p.stamina*100);
     h._bar.firstElementChild.style.width = pct+'%';
     h._bar.className = 'bar2 ' + (pct<25?'low' : pct<55?'mid' : '');
@@ -1596,6 +1599,7 @@ function crearHumanos(n){
   for(let i=0;i<n;i++){
     const anterior=prev[i];
     S.humans.push(anterior || {
+      seatId:i, playerId:null,          // vínculo por identificador, no por referencia
       idx:i, nombre:'Jugador '+(i+1),
       team: i%2,                       // 1º local, 2º visitante, 3º local...
       device: DISPOSITIVOS[i].id,
@@ -1606,7 +1610,7 @@ function crearHumanos(n){
               switch:false, shootHold:false, _p:false, _s:false, _w:false }
     });
   }
-  S.humans.forEach((h,i)=>{ h.idx=i; h.color=COLORES_HUMANO[i]; h.nombre='Jugador '+(i+1); });
+  S.humans.forEach((h,i)=>{ h.idx=i; h.seatId=i; h.color=COLORES_HUMANO[i]; h.nombre='Jugador '+(i+1); });
 }
 
 // etiquetas de las 11 posiciones de una formación
@@ -1695,7 +1699,7 @@ function startMatch(){
   cards[0]={a:0,r:0}; cards[1]={a:0,r:0}; S.setPiece=null;
   replay.frames.length=0;   // el buffer guarda referencias a los Player del partido anterior
   if(!S.humans.length) crearHumanos(S.numHumanos);
-  S.humans.forEach(h=>h.controlled=null);
+  S.humans.forEach(h=>{ h.playerId=null; });
   setupHUDTeams(); updateCardsUI(); buildStaminaUI();
   placeKickoff(0);
   S.phase='kickoff'; S.phaseT=0; S.running=true; S.paused=false;
@@ -1865,7 +1869,7 @@ function boot(){
     golden(segundos=90, semilla=12345){
       const humanosAntes = S.humans;
       S.humans = [];                                   // IA pura: sin entradas humanas
-      for(const arr of teams) for(const p of arr) p.humanOwner = null;
+      for(const arr of teams) for(const p of arr) p.ownerSeat = null;
       sembrar(semilla);
       // Mundo COMPLETAMENTE limpio. Reutilizar los jugadores no sirve: arrastran
       // energía gastada y temporizadores, y sendOff() los saca del array, así que
