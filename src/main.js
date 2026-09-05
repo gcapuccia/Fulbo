@@ -1084,6 +1084,25 @@ function updateHumans(dt){
 function updateHuman(dt, h){
   const p=h.controlled; if(!p || p.expelled) return;
   const input = h.input;
+
+  // EN EL SUELO NO SE MANEJA. Sin esto, seguir apretando una dirección mientras
+  // el jugador estaba derribado lo hacía "correr acostado" por el campo.
+  // La IA ya tenía esta guarda; el camino del humano no.
+  if(p.stunTimer > 0){
+    p.vel.multiplyScalar(0.80);   // derribado: se queda donde cayó
+    p.sprinting = false;
+    h.buffer = null;              // no se guardan acciones pedidas desde el suelo
+    return;
+  }
+  if(p.sliding > 0){
+    // La barrida ya lanzó al jugador: conserva su inercia y NO se puede dirigir
+    // a mitad de deslizamiento, igual que en el fútbol de verdad.
+    p.vel.multiplyScalar(0.94);
+    p.pos.addScaledVector(p.vel, dt);
+    clampToField(p.pos);
+    p.sprinting = false;
+    return;
+  }
   // Mapeo relativo a la CÁMARA LATERAL: la cámara está en -X mirando hacia +X,
   // así que "arriba" en pantalla = +X (alejarse) y "derecha" = +Z (arco rival del local).
   const mv=_v.set(-input.move.y, 0, input.move.x);
