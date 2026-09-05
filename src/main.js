@@ -15,6 +15,8 @@ import { DT, MAX_PASOS, DIFF, SPRINT_MUL, TOQUE_MAX, CAPTURA, SP_LABEL,
                                               from './config/rules.js';
 // --- Núcleo ---
 import { Vec3 }                               from './core/math.js';
+import { tickTimers }                         from './core/systems/movement.js';
+import { syncPlayerView }                     from './render/playerView.js';
 import { binds, guardarBinds, restaurarBinds, nombreTecla, ACCIONES }
                                               from './config/binds.js';
 import { perfil, setApodo, contarPartido }    from './app/perfil.js';
@@ -294,46 +296,7 @@ class Player {
     this.mesh=g; G.scene.add(g);
   }
   setKitVisible(v){}
-  update(dt){
-    // orientación
-    const speed = this.vel.length();
-    if(speed>0.2) this.facing = Math.atan2(this.vel.x, this.vel.z);
-    this.mesh.rotation.y = this.facing;
-    this.mesh.position.set(this.pos.x, 0, this.pos.z);
 
-    // animación de carrera
-    const cadence = Math.min(speed*1.1, 14);
-    this.runPhase += dt*(4+cadence);
-    const sw = Math.sin(this.runPhase)* Math.min(0.2+speed*0.05,0.9);
-    this.lLeg.rotation.x = sw; this.rLeg.rotation.x = -sw;
-    this.lKnee.rotation.x = Math.max(0,-sw)*1.2; this.rKnee.rotation.x = Math.max(0,sw)*1.2;
-    this.lArm.rotation.x = -sw*0.8; this.rArm.rotation.x = sw*0.8;
-    // codos siempre algo flexionados, más al correr
-    const flex = 0.5 + Math.abs(sw)*0.7;
-    this.lCodo.rotation.x = -flex; this.rCodo.rotation.x = -flex;
-    // rebote vertical del cuerpo
-    this.torso.position.y = 1.66 + Math.abs(Math.sin(this.runPhase))*Math.min(speed*0.02,0.12);
-    if(this.stunTimer>0) this.stunTimer-=dt;
-    if(this.slideCd>0) this.slideCd-=dt;
-    if(this.heading>0) this.heading-=dt;
-
-    // pose: barrida (cuerpo al suelo), cabezazo (torso atrás) o caído por falta
-    if(this.sliding>0){
-      this.sliding-=dt;
-      // tumbado casi horizontal y APOYADO sobre el césped, no dentro de él
-      this.cuerpo.rotation.x = -1.42;
-      this.cuerpo.position.set(0, 0.42, -0.30);
-      this.lLeg.rotation.x = 0.85; this.rLeg.rotation.x = -0.30;
-      this.lArm.rotation.x = -0.9; this.rArm.rotation.x = -0.5;
-    } else if(this.stunTimer>0){
-      this.cuerpo.rotation.x = -1.52;        // en el suelo tras la falta
-      this.cuerpo.position.set(0, 0.46, -0.34);
-      this.lArm.rotation.x = -1.1; this.rArm.rotation.x = -0.8;
-    } else {
-      this.cuerpo.rotation.x = this.heading>0 ? -0.45 : 0;
-      this.cuerpo.position.set(0,0,0);
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1421,7 +1384,8 @@ function stepSim(dt){
       if(h && (h.input.pass||h.input.shoot)) takeSetPiece();
     }
   }
-  for(let ti=0;ti<2;ti++)for(const p of teams[ti]) p.update(dt);
+  // temporizadores y orientación: estado autoritativo, en todas las fases
+  for(let ti=0;ti<2;ti++)for(const p of teams[ti]) tickTimers(p, dt);
   if(G.goalCooldown>0) G.goalCooldown-=dt;
   G.simTick++;
 }
@@ -1436,6 +1400,7 @@ function animate(){
     while(G.acumulador >= DT && pasos < MAX_PASOS){ stepSim(DT); G.acumulador -= DT; pasos++; }
     if(pasos === MAX_PASOS) G.acumulador = 0;   // se descarta el atraso en vez de acumularlo
     // --- presentación: a la tasa del monitor, no del simulador ---
+    for(let ti=0;ti<2;ti++)for(const p of teams[ti]) syncPlayerView(p, frameDt);
     syncBallView(frameDt);
     updateConfetti(frameDt);
     updateCrowd(frameDt);
