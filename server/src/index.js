@@ -18,6 +18,15 @@ import { crearAutenticador } from './auth/index.js';
 import { DT } from '../../src/config/rules.js';
 
 const PUERTO = Number(process.env.PORT || 2567);
+// --- LÍMITES PARA INTERNET ---
+// En tu máquina nada de esto hace falta. Abierto al mundo, sin esto cualquiera
+// puede abrir diez mil sockets, crear cuentas sin fin desde un script, o
+// conectarse desde otra web usando tu servidor de gratis.
+const ORIGENES  = (process.env.ORIGENES || '').split(',').map(o => o.trim()).filter(Boolean);
+const MAX_SALAS = Number(process.env.MAX_SALAS || 200);
+const MAX_CONEX = Number(process.env.MAX_CONEX || 400);
+const MAX_REGISTROS_IP = Number(process.env.MAX_REGISTROS_IP || 5);   // por hora
+const VENTANA_IP = 60 * 60 * 1000;
 const HZ_ESTADO = 20;                       // snapshots por segundo
 const CADA = Math.round(60 / HZ_ESTADO);    // uno cada 3 ticks
 // Margen para volver tras una caída sin perder el puesto. Mientras tanto la IA
@@ -34,13 +43,42 @@ const deCliente = new Map();                // ws -> { clienteId, codigo }
 const http = createServer((req, res) => {
   if(req.url === '/salud'){
     res.writeHead(200, {'content-type':'application/json'});
-    res.end(JSON.stringify({ ok:true, salas: salas.size,
+    res.end(JSON.stringify({ ok:true, salas: salas.size, conexiones,
+      limites: { salas: MAX_SALAS, conexiones: MAX_CONEX, origenes: ORIGENES.length || 'cualquiera' },
       detalle: [...salas.values()].map(s => ({ codigo:s.codigo, fase:s.fase, gente:s.clientes.size })) }));
     return;
   }
   res.writeHead(404); res.end();
 });
-const wss = new WebSocketServer({ server: http });
+const wss = new WebSocketServer({
+  server: http,
+  // Un mensaje del juego no llega a 1 KB. Sin tope, alguien puede mandar 100
+  // MB y tumbar el proceso sin ni siquiera tener cuenta.
+  maxPayload: 16 * 1024,
+  // Si se declara una lista de orígenes, sólo esas webs pueden conectarse.
+  // Sin ella (desarrollo) se acepta cualquiera.
+  verifyClient({ origin, req }, listo){
+    if(conexiones >= MAX_CONEX) return listo(false, 503, 'servidor lleno');
+    if(!ORIGENES.length) return listo(true);
+    listo(ORIGENES.includes(origin), 403, 'origen no permitido');
+  },
+});
+
+let conexiones = 0;
+const registrosPorIP = new Map();      // ip -> { n, desde }
+
+/** Detrás de un proxy (Fly, Railway) la IP real viene en la cabecera. */
+const ipDe = req => (req.headers['fly-client-ip'] ||
+  String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
+  req.socket.remoteAddress || '?');
+
+function puedeRegistrar(ip){
+  const ahora = Date.now();
+  const r = registrosPorIP.get(ip);
+  if(!r || ahora - r.desde > VENTANA_IP){ registrosPorIP.set(ip, { n:1, desde:ahora }); return true; }
+  if(r.n >= MAX_REGISTROS_IP) return false;
+  r.n++; return true;
+}
 
 const enviar = (ws, t, datos = {}) => {
   if(ws.readyState === 1) ws.send(JSON.stringify({ t, ...datos }));
@@ -70,9 +108,10 @@ const listaSalas = () => ({
                  anfitrion: s.asientos.get(s.anfitrion)?.nombre || 'sin anfitrión' })),
 });
 
-wss.on('connection', ws => {
+wss.on('connection', (ws, req) => {
+  conexiones++;
   const clienteId = randomUUID().slice(0, 8);
-  deCliente.set(ws, { clienteId, codigo: null, cuenta: null });
+  deCliente.set(ws, { clienteId, codigo: null, cuenta: null, ip: ipDe(req) });
 
   ws.on('message', async bruto => {
     let msg;
@@ -86,6 +125,8 @@ wss.on('connection', ws => {
       // el token. Lo único que se escribe es el nombre al entrar a una sala.
       case C.REGISTRO:
       case C.ENTRAR: {
+        if(msg.t === C.REGISTRO && !puedeRegistrar(info.ip))
+          return enviar(ws, S.ERROR, { motivo:'demasiadas cuentas nuevas desde aquí; probá más tarde' });
         const fn = msg.t === C.REGISTRO ? auth.registrar : auth.entrar;
         const r = await fn(msg.nombre, msg.clave);
         if(!r.ok) return enviar(ws, S.ERROR, { motivo: r.motivo });
@@ -125,6 +166,8 @@ wss.on('connection', ws => {
         let s = msg.codigo ? salas.get(String(msg.codigo).toUpperCase()) : null;
         if(msg.codigo && !s) return enviar(ws, S.ERROR, { motivo:'no existe esa sala' });
         if(!s){
+          if(salas.size >= MAX_SALAS)
+            return enviar(ws, S.ERROR, { motivo:'no hay salas libres ahora mismo' });
           let cod; do { cod = codigoSala(Math.random); } while(salas.has(cod));
           s = new Sala(cod, (Math.random()*1e9)|0);
           s.creadaEn = Date.now();
@@ -198,6 +241,7 @@ wss.on('connection', ws => {
   });
 
   ws.on('close', () => {
+    conexiones--;
     const info = deCliente.get(ws);
     deCliente.delete(ws);
     if(!info || !info.codigo) return;
@@ -253,3 +297,20 @@ http.listen(PUERTO, () => {
   console.log(`  estado: http://localhost:${PUERTO}/salud`);
   console.log(`  paso fijo ${(DT*1000).toFixed(2)} ms · snapshots a ${HZ_ESTADO} Hz`);
 });
+
+// --- CIERRE ORDENADO ---
+// Fly y Railway mandan SIGTERM y esperan unos segundos antes de matar el
+// proceso. Sin esto, un despliegue corta las partidas de golpe y —peor— puede
+// dejar el archivo de cuentas a medio escribir.
+let cerrando = false;
+function cerrar(senal){
+  if(cerrando) return;
+  cerrando = true;
+  console.log(`[${senal}] cerrando: ${salas.size} sala(s), ${conexiones} conexión(es)`);
+  for(const [, sala] of salas) difundir(sala, S.ERROR, { motivo:'el servidor se está reiniciando' });
+  wss.clients.forEach(c => c.close(1001, 'servidor reiniciando'));
+  http.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 4000).unref();
+}
+process.on('SIGTERM', () => cerrar('SIGTERM'));
+process.on('SIGINT',  () => cerrar('SIGINT'));

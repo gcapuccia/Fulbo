@@ -1,7 +1,7 @@
 // Extremo a extremo: sin cuenta no se entra a una sala; con cuenta, sí.
 import WebSocket from 'ws';
 import { C, S } from './protocolo.js';
-const URL = 'ws://localhost:2567';
+const URL = process.env.URL || 'ws://localhost:2567';
 const espera = ms => new Promise(r => setTimeout(r, ms));
 let fallos = 0;
 const ok = (c, t) => { console.log(`${c ? '  ok  ' : '  FALLA'} ${t}`); if(!c) fallos++; };

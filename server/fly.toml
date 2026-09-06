@@ -1,0 +1,47 @@
+# Despliegue del servidor de salas en Fly.io.
+#
+# IMPORTANTE: se construye desde la RAÍZ del repositorio, porque el servidor
+# importa el núcleo por ruta relativa (../../src/core). El comando es:
+#
+#   fly deploy . --config server/fly.toml
+#                ↑ el punto es la raíz, no server/
+app            = "fulbo-salas"
+primary_region = "eze"          # Ezeiza. Cambialo por el más cercano a quien juegue.
+
+[build]
+  dockerfile = "server/Dockerfile"
+
+[env]
+  PORT     = "8080"
+  CUENTAS  = "/datos/cuentas.json"
+  # Sólo tu web puede abrir sockets contra este servidor. Sin esto, cualquier
+  # página de internet podría usarlo de gratis.
+  ORIGENES = "https://fulbo-ar.vercel.app"
+
+# Las cuentas van en un volumen: el disco de la máquina es efímero y sin esto
+# cada despliegue las borraría todas.
+#   fly volumes create fulbo_datos --region eze --size 1
+[[mounts]]
+  source      = "fulbo_datos"
+  destination = "/datos"
+
+[http_service]
+  internal_port       = 8080
+  force_https         = true      # el navegador exige wss:// desde una página https
+  auto_start_machines = true
+  # Se suspende cuando no hay nadie conectado y despierta con la primera
+  # conexión: con esto una sala vacía no cuesta nada. Mientras haya un socket
+  # abierto la máquina NO se suspende, así que no corta partidos en curso.
+  auto_stop_machines  = "suspend"
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval     = "30s"
+    method       = "GET"
+    path         = "/salud"
+    timeout      = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

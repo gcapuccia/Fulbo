@@ -794,7 +794,20 @@ document.getElementById('toMenu').onclick=()=>{
 // dibuja lo que contesta. Todo el render, la cámara, el HUD y las animaciones
 // son EXACTAMENTE los mismos: leen el mismo objeto partido, sólo que lo llena
 // la red en vez de stepSim().
-const URL_SERVIDOR = import.meta.env.VITE_SERVIDOR || `ws://${location.hostname}:2567`;
+// A dónde se conecta el juego. En desarrollo, al servidor de tu máquina; en
+// producción, a lo que diga VITE_SERVIDOR al construir.
+//
+// El respaldo mira el protocolo de la página, y no es un detalle: una página
+// servida por https NO puede abrir un WebSocket ws:// —el navegador lo bloquea
+// por contenido mixto, sin avisar de forma clara— así que el juego publicado
+// se quedaría "conectando…" para siempre. Si estás en https y nadie configuró
+// VITE_SERVIDOR, eso es un despliegue a medias y conviene decirlo.
+const URL_SERVIDOR = (() => {
+  if(import.meta.env.VITE_SERVIDOR) return import.meta.env.VITE_SERVIDOR;
+  const seguro = location.protocol === 'https:';
+  if(seguro) console.warn('[FÚLBO] falta VITE_SERVIDOR: el modo online no va a conectar');
+  return `${seguro ? 'wss' : 'ws'}://${location.hostname}:2567`;
+})();
 let online = null;              // sesión activa, o null si se juega local
 let posesOnline = null;
 // El cliente simula el partido entero y lo corrige con lo que manda el
