@@ -9,7 +9,7 @@
 // antes de cada tick. No es reentrante a propósito: un servidor procesa el tick
 // de la sala A entero y después el de la B, nunca entrelazados.
 import { Vec3 } from './math.js';
-import { mulberry32 } from './rng.js';
+import { siguienteAzar } from './rng.js';
 import { BALL_R } from '../config/field.js';
 import { TEAMS } from '../config/teams.js';
 
@@ -54,11 +54,14 @@ export function crearPartido({ semilla = 12345, local = TEAMS[0], visitante = TE
     acumulador: 0,
 
     // --- azar PROPIO: dos partidos con la misma semilla son idénticos,
-    //     y dos partidos distintos no se pisan la secuencia ---
+    //     y dos partidos distintos no se pisan la secuencia.
+    //     El ESTADO vive aquí, en `azar`, como un número: si estuviera
+    //     encerrado en una clausura no se podría guardar, y sin poder
+    //     guardarlo no hay resimulación ni predicción posible. ---
     semilla,
-    _gen: mulberry32(semilla),
-    rng(){ return this._gen(); },
-    sembrar(n){ this.semilla = n >>> 0; this._gen = mulberry32(this.semilla); return this.semilla; },
+    azar: semilla >>> 0,
+    rng(){ const [v, s] = siguienteAzar(this.azar); this.azar = s; return v; },
+    sembrar(n){ this.semilla = n >>> 0; this.azar = this.semilla; return this.semilla; },
 
     // --- estadísticas para afinar el balance ---
     estad: { tiros: 0, cabezazos: 0, despejesPortero: 0, goles: 0, ticksConDueno: 0 },

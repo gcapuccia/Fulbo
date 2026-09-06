@@ -239,7 +239,12 @@ setInterval(() => {
     if(pasos === null) continue;
     const evs = sala.eventos();
     if(evs.length) difundir(sala, S.EVENTOS, { lista: evs });   // fiables y en orden
-    if(difundeEstado) difundir(sala, S.ESTADO, sala.snapshot());
+    if(difundeEstado){
+      const { inst, entradas } = sala.instantanea();
+      // El estado completo ya contiene el de dibujo: mandar los dos era
+      // enviar las posiciones dos veces.
+      difundir(sala, S.ESTADO, { tick: inst.tick, inst, entradas });
+    }
   }
 }, 1000 / 60);
 

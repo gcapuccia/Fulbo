@@ -52,7 +52,12 @@ export function crearSesionOnline({ url, nombre }){
          .al('expulsado',  () => { s.codigo = null; quiereEstar = null; s.fase = 'lobby'; })
          .al('estado',     m => {
               s.ultimo = m;
-              if(s.seatId != null && m.ack) s.ack = m.ack[s.seatId] ?? s.ack;
+              if(s.alEstado) s.alEstado(m);      // se lo lleva la predicción
+              // el ack vive dentro del estado completo, en el propio asiento
+              if(s.seatId != null && m.inst){
+                const a = m.inst.asientos.find(x => x.seatId === s.seatId);
+                if(a) s.ack = a.entrada.ultimoSeq;
+              }
               buffer.push(m);
               if(buffer.length > 20) buffer.shift();
               // el reloj del búfer arranca en cuanto hay dos snapshots
@@ -67,6 +72,7 @@ export function crearSesionOnline({ url, nombre }){
       return s;
     },
 
+    alEstado: null,            // lo engancha el cliente para predecir
     pedirSalas(){ bus.enviar('salas', {}); },
     preparado(listo){ bus.enviar('preparado', { listo }); },
     echar(userId){ bus.enviar('echar', { userId }); },
@@ -87,9 +93,15 @@ export function crearSesionOnline({ url, nombre }){
     empezar(){ bus.enviar('empezar', {}); },
     medirPing(){ bus.enviar('ping', { t0: performance.now() }); },
 
-    /** Manda lo que el jugador está apretando. Igual que en local, pero por cable. */
+    /**
+     * Manda lo que el jugador está apretando y DEVUELVE el comando, porque el
+     * cliente además lo guarda: sin guardarlo no se podría repetir la historia
+     * al llegar la corrección del servidor.
+     */
     enviarEntrada(mx, mz, botones){
-      bus.enviar('cmd', { seq: seq++, tick: s.ultimo ? s.ultimo.tick : 0, mx, mz, buttons: botones });
+      const cmd = { seq: seq++, tick: s.ultimo ? s.ultimo.tick : 0, mx, mz, buttons: botones };
+      bus.enviar('cmd', cmd);
+      return cmd;
     },
 
     /**

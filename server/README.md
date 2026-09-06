@@ -23,9 +23,15 @@ npm run dev          # ws://localhost:2567
 - **Acumulador con el tiempo REAL.** `setInterval` en Node se desvía entre 1 y
   16 ms; pasar `1/60` fijo separaría la física del servidor de la del cliente
   desde el primer tick.
-- **Snapshots a 20 Hz, eventos al instante.** Van por caminos distintos a
-  propósito: un snapshot viejo lo corrige el siguiente, pero un GOL perdido no
+- **Estado completo a 20 Hz, eventos al instante.** Van por caminos distintos
+  a propósito: un estado viejo lo corrige el siguiente, pero un GOL perdido no
   se recupera nunca.
+- **El estado que se manda sirve para RESIMULAR, no sólo para dibujar.** Lleva
+  velocidades, energía, temporizadores, quién controla a quién y —lo que casi
+  siempre se olvida— el estado del azar. Sin eso el cliente no puede predecir.
+  Son 2 KB por mensaje, 41 KB/s por cliente: unas diez veces el objetivo del
+  plan, que asumía codificación binaria cuantizada. Pasar de JSON a
+  `ArrayBuffer` es mecánico y está pendiente.
 - **El cliente manda comandos, jamás posiciones.** El servidor decide el
   balón, la posesión, las faltas, las tarjetas, el reloj y hasta quién
   controla a qué jugador.

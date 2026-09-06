@@ -10,6 +10,25 @@ export function mulberry32(a){
   };
 }
 
+/**
+ * El MISMO mulberry32, pero con el estado FUERA, en un número que se puede
+ * guardar y restaurar. Devuelve [valor, estadoSiguiente].
+ *
+ * No es un capricho de estilo: es lo que hace posible la predicción. Para
+ * resimular hay que poder volver a un instante pasado EXACTO, y el estado del
+ * azar es parte de ese instante. Con el generador encerrado en una clausura,
+ * ese estado no se puede ni leer ni escribir, y una resimulación que consuma
+ * azar (una dispersión de tiro, la decisión de una entrada) daría un resultado
+ * distinto al del servidor. La secuencia es idéntica a la de arriba: mismo
+ * seed, mismos números, así que el golden master no se mueve.
+ */
+export function siguienteAzar(a){
+  a |= 0; a = a + 0x6D2B79F5 | 0;
+  let t = Math.imul(a ^ a >>> 15, 1 | a);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+  return [((t ^ t >>> 14) >>> 0) / 4294967296, a];
+}
+
 let _semilla = 12345;
 let _gen = mulberry32(_semilla);
 

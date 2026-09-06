@@ -85,12 +85,12 @@ ok(b.estados.length > 5, `Beto recibe snapshots (${b.estados.length})`);
 
 console.log('\n--- reconexión ---');
 const tickAntes = b.estados.at(-1).tick;
-const dueñosAntes = b.estados.at(-1).duenos.length;
+const dueñosAntes = b.estados.at(-1).inst.duenos.length;
 b.ws.close();                                  // se le cae la conexión a Beto
 await espera(900);
 const tras = a.estados.at(-1);
 ok(tras.tick > tickAntes, `el partido SIGUE sin Beto (tick ${tickAntes} -> ${tras.tick})`);
-ok(tras.duenos.length === dueñosAntes - 1, 'su jugador pasa a la IA en el acto');
+ok(tras.inst.duenos.length === dueñosAntes - 1, 'su jugador pasa a la IA en el acto');
 ok(a.sala.jugadores.find(j => j.nombre === nB)?.conectado === false,
    'la sala lo muestra ausente, no desaparecido');
 
@@ -101,7 +101,7 @@ ok(b2.reconexion === true, 'volver con la misma cuenta se reconoce como reconexi
 ok(b2.codigo === codigo, 'vuelve a la MISMA sala');
 await espera(600);
 const trasVolver = b2.estados.at(-1) || a.estados.at(-1);
-ok(trasVolver.duenos.length === dueñosAntes, 'y recupera su jugador');
+ok(trasVolver.inst.duenos.length === dueñosAntes, 'y recupera su jugador');
 ok(trasVolver.tick > tras.tick, 'el partido nunca se detuvo');
 
 console.log('\n--- el asiento ausente NO se congela ---');
@@ -110,20 +110,20 @@ console.log('\n--- el asiento ausente NO se congela ---');
 // subía, porque la simulación le reasignaba un jugador al asiento vacío en
 // cuanto su equipo recuperaba el balón, y ese jugador se quedaba plantado en
 // el césped en vez de que lo jugara la IA.
-const antesDelCorte = a.estados.at(-1).duenos.length;
+const antesDelCorte = a.estados.at(-1).inst.duenos.length;
 const marca = a.estados.length;
 b2.ws.close();
 await espera(2500);
 // Se descartan los primeros 10 snapshots (medio segundo): son los que el
 // servidor ya tenía en vuelo cuando se cortó, y todavía cuentan a Beto.
-const durante = a.estados.slice(marca + 10).map(e => e.duenos.length);
+const durante = a.estados.slice(marca + 10).map(e => e.inst.duenos.length);
 ok(durante.length > 15 && Math.max(...durante) <= antesDelCorte - 1,
    `mientras falta, nadie ocupa su asiento (${durante.length} muestras, máximo ${Math.max(...durante)} de ${antesDelCorte})`);
 
 const b3 = cli(); await b3.listo;
 b3.env(C.SESION, { token: b.token }); await espera(400);
 b3.env(C.UNIR, { codigo }); await espera(1200);
-const despues = a.estados.at(-1).duenos.length;
+const despues = a.estados.at(-1).inst.duenos.length;
 ok(despues === antesDelCorte,
    `al volver hay exactamente ${antesDelCorte} jugadores con dueño (hay ${despues})`);
 

@@ -231,10 +231,30 @@ Para apuntar a un servidor que no sea el de tu máquina:
 - `node scripts/salas-bench.mjs 40 600`: **7,4 µs por tick y sala**; cuarenta
   salas simultáneas usan el 1,78 % del presupuesto de 16,6 ms.
 
-Lo que **todavía no** hay: predicción del lado del cliente. Tu jugador
-responde con el retardo de la red (imperceptible en LAN, notorio a 100 ms).
-Es la Fase 9 del plan y el núcleo ya está preparado para ella —determinista y
-con el estado del azar dentro del partido—, pero no está hecha.
+### Predicción: tu jugador responde al instante
+
+El cliente **no espera al servidor**. Simula el partido entero por su cuenta,
+va unos ticks por delante, y cuando llega el estado autoritativo vuelve a ese
+instante exacto y repite la historia con sus entradas. Apretás y tu jugador
+arranca en el mismo fotograma, con 40 ms de ping o con 400.
+
+No es "predecí tu jugador e interpolá el resto", que es lo que hunde el
+netcode de un juego de fútbol: el balón se pega a los pies del que lo lleva,
+así que si predecís tu cuerpo pero interpolás la pelota, la ves un metro por
+detrás tuyo. Aquí se resimula **el partido completo**, balón incluido.
+
+Medido con `node scripts/rollback-bench.mjs <ms>`:
+
+| ida y vuelta | error medio | mediana | p95 | coste de resimular |
+|---|---|---|---|---|
+| 60 ms  | 0,26 cm | 0,00 cm | 0,00 cm | 0,13 ms (8 ticks) |
+| 120 ms | 0,05 cm | 0,00 cm | 0,00 cm | 0,18 ms (12 ticks) |
+| 250 ms | 0,11 cm | 0,00 cm | 0,00 cm | 0,26 ms (19 ticks) |
+| 400 ms | 0,22 cm | 0,00 cm | 0,00 cm | 0,33 ms (28 ticks) |
+
+El plan daba por bueno un error de 5 cm; la mediana es **cero**: el cliente
+acierta el futuro exacto casi siempre. Las veces que falla (una de cada 400,
+hasta 20 cm) el desvío se cierra en el dibujo en unas décimas, sin salto.
 
 ## 🎬 Cinemáticas
 

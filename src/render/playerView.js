@@ -64,8 +64,18 @@ export function tickGestos(dt){
 }
 
 export function syncPlayerView(p, dt, pose, mirarA){
-  const x = pose ? pose.x : p.pos.x;
-  const z = pose ? pose.z : p.pos.z;
+  // Error visual pendiente: cuando la predicción se equivoca, el estado salta
+  // al del servidor de inmediato pero el DIBUJO llega desde donde estaba, en
+  // unas décimas. Se cierra a la mitad cada 100 ms, y por debajo de un
+  // milímetro se apaga.
+  if(p.errVis){
+    const k = Math.pow(0.5, dt / 0.10);
+    p.errVis.x *= k; p.errVis.z *= k;
+    if(Math.hypot(p.errVis.x, p.errVis.z) < 0.001) p.errVis = null;
+  }
+  const ex = p.errVis ? p.errVis.x : 0, ez = p.errVis ? p.errVis.z : 0;
+  const x = (pose ? pose.x : p.pos.x) + ex;
+  const z = (pose ? pose.z : p.pos.z) + ez;
   const facing = pose ? pose.facing : p.facing;
   // en la repetición la cadencia sale del desplazamiento dibujado, no de p.vel
   const speed = pose

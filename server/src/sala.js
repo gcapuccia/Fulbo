@@ -11,6 +11,7 @@ import { usarPartido, spawnTeams, placeKickoff, stepSim,
 import { drenarEventos }                from '../../src/core/events.js';
 import { encolarComando }               from '../../src/core/input.js';
 import { tomarSnapshot }                from '../../src/core/snapshot.js';
+import { capturar }                     from '../../src/core/instantanea.js';
 import { TEAMS }                        from '../../src/config/teams.js';
 import { DT, MAX_PASOS }                from '../../src/config/rules.js';
 
@@ -240,6 +241,39 @@ export class Sala {
     return pasos;
   }
 
+  /**
+   * ESTADO COMPLETO para que el cliente pueda PREDECIR.
+   *
+   * No es el snapshot de dibujar: lleva todo lo que `stepSim` lee, incluido el
+   * estado del azar. Con esto el cliente restaura este instante exacto y
+   * resimula hasta su presente, así que el balón va pegado a sus pies en vez
+   * de ir un RTT por detrás.
+   *
+   * Los números se redondean a CENTÍMETROS antes de salir. A plena precisión
+   * un flotante ocupa diecinueve caracteres en JSON, y esto viaja veinte veces
+   * por segundo: la diferencia es de 71 a 34 KB/s por cliente. El error que
+   * introduce —medio centímetro— es ridículo al lado del que ya corrige la
+   * resimulación, y además se corrige en el snapshot siguiente.
+   *
+   * Con esto ya NO hace falta mandar aparte el snapshot de dibujo: el estado
+   * completo contiene el de dibujo. Mandar los dos era enviar las posiciones
+   * dos veces.
+   */
+  instantanea(){
+    const inst = redondear(capturar(this.m));
+    inst.duenos = this.m.teams.flat().filter(p => p.ownerSeat != null)
+                      .map(p => [p.playerId, p.ownerSeat]);
+    // Última entrada conocida de cada asiento: el cliente la repite para los
+    // demás mientras resimula, que es la mejor apuesta disponible.
+    const entradas = {};
+    for(const [, a] of this.asientos) if(a.seatId != null){
+      const h = this.m.S.humans.find(x => x.seatId === a.seatId);
+      if(h) entradas[a.seatId] = [h.entrada.mx, h.entrada.mz, h.entrada.buttons,
+                                  h.entrada.ultimoSeq];
+    }
+    return { inst, entradas };
+  }
+
   /** Lo que ven los clientes. Sólo números. */
   snapshot(){
     const s = tomarSnapshot(this.m.teams, this.m.bola);
@@ -261,4 +295,17 @@ export class Sala {
 
   eventos(){ return drenarEventos(this.m); }
   hash(){ usarPartido(this.m); return hashEstado(); }
+}
+
+// Redondeo profundo a cuatro decimales. Recorre la instantánea entera porque
+// los números están anidados en arrays de arrays.
+function redondear(v){
+  if(typeof v === 'number') return Number.isInteger(v) ? v : Math.round(v * 100) / 100;
+  if(Array.isArray(v)) return v.map(redondear);
+  if(v && typeof v === 'object'){
+    const o = {};
+    for(const k in v) o[k] = redondear(v[k]);
+    return o;
+  }
+  return v;
 }

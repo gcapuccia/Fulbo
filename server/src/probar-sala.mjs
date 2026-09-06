@@ -62,17 +62,19 @@ await espera(400);
 
 const ua = a.estados.at(-1), ub = b.estados.at(-1);
 const mismoTick = a.estados.filter(x => ub && x.tick === ub.tick)[0];
+const jug = e => JSON.stringify(e.inst.equipos);
 console.log(`\nAna recibió ${a.estados.length} snapshots · Beto ${b.estados.length}`);
 console.log(`último tick: Ana ${ua.tick} · Beto ${ub.tick}`);
 if(mismoTick){
-  const iguales = JSON.stringify(mismoTick.j) === JSON.stringify(ub.j);
+  const iguales = jug(mismoTick) === jug(ub);
   console.log(`en el tick ${ub.tick} los 22 jugadores son ${iguales ? 'IDÉNTICOS' : 'DISTINTOS'}`);
 }
-console.log(`marcador ${ua.marcador.join('-')} · reloj ${ua.reloj}s · fase ${ua.fase}`);
-console.log(`ack de Ana: seq ${ua.ack[a.seatId]} (mandó ${a.seq-1})`);
+console.log(`marcador ${ua.inst.S.score.join('-')} · reloj ${ua.inst.S.clock.toFixed(1)}s · fase ${ua.inst.S.phase}`);
+const miAsiento = ua.inst.asientos.find(x => x.seatId === a.seatId);
+console.log(`ack de Ana: seq ${miAsiento ? miAsiento.entrada.ultimoSeq : '?'} (mandó ${a.seq-1})`);
 console.log(`eventos que vio Ana: ${[...new Set(a.eventos.map(e=>e.tipo))].join(', ') || '(ninguno)'}`);
 console.log(`eventos que vio Beto: ${[...new Set(b.eventos.map(e=>e.tipo))].join(', ') || '(ninguno)'}`);
-console.log(`dueños de jugador: ${JSON.stringify(ua.duenos)}`);
+console.log(`dueños de jugador: ${JSON.stringify(ua.inst.duenos)}`);
 a.ws.close(); b.ws.close();
 await espera(200);
 process.exit(0);

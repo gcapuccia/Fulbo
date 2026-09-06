@@ -426,7 +426,41 @@ Aprovechá para **borrar el equipo 0 cableado** de `updatePhase` (1868/1873/1877
 #### **FASE 8 — Lobby, salas y despliegue** (2-3 días)
 Códigos de 4-5 letras, salas públicas, `LobbyRoom`, reconexión, reclamo de asiento. **Ojo:** todo el flujo que hoy *crea* el partido (`buildMenu`, `crearHumanos`, `renderPlayersCfg`, `asignarPosicionesIniciales`) vive en el DOM del cliente; en una sala eso se convierte en **una máquina de estados del servidor** con reclamo de asiento, resolución de conflictos, ready-up y expulsión. **Es la fase más subestimada del plan: presupuestala como si fuera del mismo tamaño que la Fase 7.**
 
-#### **FASE 9 — Rollback y resimulación** (la difícil) — ver §5.
+#### **FASE 9 — Rollback y resimulación** (la difícil) — ✅ HECHA (2026-09-06)
+
+Salió mejor de lo que este documento se atrevía a estimar, y por una razón
+concreta que conviene anotar: **sellar cada comando con el tick del cliente y
+consumirlo en ESE tick**, no en orden de llegada.
+
+Sin eso, el cliente aplicaba su entrada en el tick 500 y el servidor, con
+jitter, en el 502: nadie se equivocaba, pero simulaban historias distintas y
+la corrección tenía que arreglar la diferencia cada vez. Medido: 4,18 cm de
+error medio y picos de medio metro. Con el reloj común, el error medio baja a
+**0,05 cm y la mediana a cero** — el cliente acierta el futuro exacto.
+
+| ida y vuelta | error medio | mediana | p95 | peor | resimular |
+|---|---|---|---|---|---|
+| 60 ms  | 0,26 cm | 0,00 | 0,00 | 93 cm | 0,13 ms (8 ticks) |
+| 120 ms | 0,05 cm | 0,00 | 0,00 | 21 cm | 0,18 ms (12 ticks) |
+| 250 ms | 0,11 cm | 0,00 | 0,00 | 43 cm | 0,26 ms (19 ticks) |
+| 400 ms | 0,22 cm | 0,00 | 0,00 | 88 cm | 0,33 ms (28 ticks) |
+
+El coste estimado aquí era de 2-4 ms por corrección; el real es de 0,13 a 0,33
+ms, diez veces menos. El peor caso (una de cada 400) se absorbe suavizando el
+DIBUJO durante unas décimas: el estado pasa a ser el del servidor de
+inmediato, sólo se disimula el salto visual.
+
+Lo que hizo falta, y en este orden:
+1. `siguienteAzar()` — el mismo mulberry32 pero con el estado FUERA, en un
+   número guardable. Encerrado en una clausura no se puede restaurar, y una
+   resimulación que consuma azar diverge.
+2. `core/instantanea.js` — capturar y restaurar todo lo que `stepSim` LEE, no
+   sólo lo que se ve. Al restaurar se MUTAN los objetos existentes: en el
+   cliente cada jugador lleva su malla colgada.
+3. `consumirComando(h, tick)` — el reloj común.
+4. `net/prediccion.js` — el rollback propiamente dicho.
+
+Ver §5.
 
 ---
 

@@ -949,7 +949,9 @@ function stepSim(dt){
   // UN comando por asiento y por tick, SIEMPRE, corra la fase que corra. Si
   // sólo se consumieran durante el juego, la cola de un asiento crecería
   // mientras se cobra una falta y después se vaciaría de golpe.
-  for(const h of m.S.humans) h.mando = consumirComando(h);
+  // El tick va como argumento: es el reloj común que alinea al cliente con el
+  // servidor. Sin él, cada uno aplica la misma entrada en un momento distinto.
+  for(const h of m.S.humans) h.mando = consumirComando(h, m.simTick);
   updatePhase(dt);
   if(m.S.phase==='play'||m.S.phase==='kickoff'){
     updateHumans(dt);

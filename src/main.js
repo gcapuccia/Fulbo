@@ -40,6 +40,7 @@ import { fijarActivo }                        from './core/activo.js';
 import { BTN, crearComando, encolarComando } from './core/input.js';
 import { aMundo }                             from './input/cameraSpace.js';
 import { crearSesionOnline, botonesDe }       from './app/onlineSession.js';
+import { crearPrediccion }                    from './net/prediccion.js';
 import { leerSesion }                         from './app/cuenta.js';
 import { m, usarPartido, partidoActual,
          hashEstado, spawnTeams, placeKickoff, asignarControl, cycleFormation,
@@ -564,10 +565,10 @@ function animate(){
   if(m.S.running && !m.S.paused){
     const enRed = online && online.fase === 'jugando';
     if(enRed){
-      // ONLINE: no se simula nada aquí. Se manda lo que apretás y se dibuja
-      // lo que contesta el servidor, que es la única autoridad.
-      enviarEntradaOnline(frameDt);
-      aplicarEstadoOnline(frameDt);
+      // ONLINE: el cliente SÍ simula, y el servidor lo corrige. El estado
+      // autoritativo entra por prediccion.aplicar() cuando llega, no aquí.
+      posesOnline = null;
+      tickOnline(frameDt);
       presentar(anotarEventos(online.drenarEventos()));
     } else {
       posesOnline = null;
@@ -796,6 +797,10 @@ document.getElementById('toMenu').onclick=()=>{
 const URL_SERVIDOR = import.meta.env.VITE_SERVIDOR || `ws://${location.hostname}:2567`;
 let online = null;              // sesión activa, o null si se juega local
 let posesOnline = null;
+// El cliente simula el partido entero y lo corrige con lo que manda el
+// servidor. Ver net/prediccion.js: es lo que hace que el balón vaya pegado a
+// tus pies en vez de ir un RTT por detrás.
+const prediccion = crearPrediccion({ partido: m, usar: usarPartido, paso: stepSim });
 
 const $on = id => document.getElementById(id);
 function estadoOnline(txt){ const e=$on('onEstado'); if(e) e.textContent = txt; }
@@ -957,6 +962,7 @@ function volverAlMenuDesdeRed(){
 // sus posiciones las va a escribir el servidor en cada snapshot.
 function arrancarPartidoOnline(msg){
   ensureAudio();
+  prediccion.reiniciar();
   limpiarMallas(G.scene); m.teams[0]=[]; m.teams[1]=[];
   crearEquiposYMallas();
   m.S.score=[0,0]; m.S.clock=0; m.S.half=1;
@@ -970,30 +976,36 @@ function arrancarPartidoOnline(msg){
   });
   setupHUDTeams(); updateCardsUI(); buildStaminaUI();
   m.S.phase='kickoff'; m.S.phaseT=0; m.S.running=true; m.S.paused=false;
+  prediccion.fijarAsiento(online.seatId);
+  online.alEstado = msg2 => prediccion.aplicar(msg2, online.ping);
   $on('online').classList.add('hidden');
   $on('menu').classList.add('hidden');
   $on('hud').style.display='block';
   playWhistle(1);
 }
 
-// Se manda UN comando por tick de simulación, no por frame: el servidor
-// consume uno por tick y a 144 Hz se le desbordaría la cola. Online siempre
-// se lee el teclado 1 (o el mando): cada persona juega en SU máquina.
+// UN comando por tick de simulación, no por frame. Y cada comando hace tres
+// cosas a la vez: se manda al servidor, se guarda por si hay que repetirlo, y
+// se aplica YA en la simulación local. Eso último es la predicción: tu
+// jugador arranca en el mismo fotograma en que apretás, sin esperar respuesta.
 let _accRed = 0;
-function enviarEntradaOnline(frameDt){
+function tickOnline(frameDt){
   _accRed += frameDt;
   let n = 0;
   while(_accRed >= DT && n < MAX_PASOS){
     const r = leerDispositivo(pad.connected ? 'pad0' : 'teclado1');
     const d = aMundo(r.mx, r.my);
-    online.enviarEntrada(d.x, d.z, botonesDe(r));
+    const cmd = online.enviarEntrada(d.x, d.z, botonesDe(r));
+    if(cmd) prediccion.registrar(cmd);
+    prediccion.avanzar();
     _accRed -= DT; n++;
   }
   if(n === MAX_PASOS) _accRed = 0;
 }
 
-// Dibuja el partido que manda el servidor: posiciones interpoladas, y el
-// marcador, el reloj y la fase tal cual vienen.
+// CAMINO DE ESPECTADOR: dibujar lo que manda el servidor sin simular nada,
+// con el búfer de interpolación. Ya no lo usa quien juega —ese predice— pero
+// es exactamente lo que hará falta para ver un partido ajeno.
 function aplicarEstadoOnline(frameDt){
   posesOnline = online.poses(frameDt);
   const u = online.ultimo;
@@ -1115,6 +1127,8 @@ function boot(){
     get canvases(){return document.querySelectorAll('canvas').length;},
     get tick(){return m.simTick;},
     get online(){return online;},          // sonda: sesión de red, si la hay
+    get prediccion(){return prediccion;},  // sonda: medidas de rollback
+    latencia(ms){ return online ? online.bus.simularLatencia(ms) : 'sin sesión'; },
     LIGA, simularJornada, clasificacion, mostrarTorneo,
 
     // --- determinismo ---
