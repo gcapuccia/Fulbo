@@ -5,7 +5,8 @@
 // cartel, confeti, un silbato y una ovación es cosa de aquí.
 export function crearPresentador(dep){
   const { announce, updateScorebug, updateCardsUI, burstConfetti,
-          playWhistle, playKick, crowdCheer, mostrarTarjeta, teamName, nombreGoleador } = dep;
+          playWhistle, playKick, crowdCheer, mostrarTarjeta, teamName, nombreGoleador,
+          ocultarJugador, cerrarPartido, etiquetaFormacion } = dep;
 
   return function presentar(eventos){
     for(const e of eventos){
@@ -58,6 +59,15 @@ export function crearPresentador(dep){
 
         case 'FORMACION':
           announce('FORMACIÓN', e.nombre);
+          etiquetaFormacion(e.nombre);
+          break;
+
+        case 'EXPULSION':                // la regla ya lo sacó del equipo; aquí se esconde
+          ocultarJugador(e.playerId);
+          break;
+
+        case 'CIERRE':                   // el partido terminó su espera: volver al menú
+          cerrarPartido();
           break;
       }
     }

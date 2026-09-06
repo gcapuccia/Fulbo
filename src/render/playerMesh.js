@@ -19,6 +19,24 @@ import { softShadowTexture, skinTex } from './textures.js';
  * @param kit    {c1, c2} colores del equipo
  * @param escena THREE.Scene
  */
+// Registro playerId -> malla. Hace falta porque un expulsado se saca del
+// array `teams` (sendOff hace splice): a partir de ahí el bucle de render ya
+// no lo visita, y su cuerpo se quedaba plantado en el césped. Antes se
+// resolvía con `p.mesh.visible=false` DENTRO de la regla de expulsión.
+const mallas = new Map();
+
+/** Esconde a un expulsado. La regla sólo emite el evento; esconder es vista. */
+export function ocultarMalla(playerId){
+  const g = mallas.get(playerId);
+  if(g) g.visible = false;
+}
+
+/** Saca todas las mallas de la escena entre partido y partido. */
+export function limpiarMallas(escena){
+  for(const g of mallas.values()) escena.remove(g);
+  mallas.clear();
+}
+
 export function construirMalla(p, kit, escena){
   // fase de zancada inicial: que no arranquen los 22 con el mismo paso.
   // Vive aquí, en la vista, porque no la lee ninguna regla.
@@ -117,6 +135,6 @@ export function construirMalla(p, kit, escena){
 
   // el modelo mide ~2.70 unidades; escalarlo a 1.80 m de estatura real
   g.scale.setScalar(1.80/2.70);
-  p.mesh=g; escena.add(g);
+  p.mesh=g; escena.add(g); mallas.set(p.playerId, g);
   return p;
 }

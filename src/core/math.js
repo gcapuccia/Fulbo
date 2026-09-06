@@ -38,3 +38,13 @@ export class Vec3 {
   toArray()           { return [this.x, this.y, this.z]; }
   fromArray(a, o = 0) { this.x = a[o]; this.y = a[o+1]; this.z = a[o+2]; return this; }
 }
+
+// Vector de dos componentes para las entradas (stick / teclas). Antes el
+// estado de cada asiento guardaba un THREE.Vector2: el asiento es dato de
+// partido y viaja por la red, así que no puede depender del motor de dibujo.
+export class Vec2 {
+  constructor(x = 0, y = 0){ this.x = x; this.y = y; }
+  set(x, y){ this.x = x; this.y = y; return this; }
+  length(){ return Math.hypot(this.x, this.y); }
+  clone(){ return new Vec2(this.x, this.y); }
+}

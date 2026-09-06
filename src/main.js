@@ -14,7 +14,7 @@ import { DT, MAX_PASOS, DIFF, SPRINT_MUL, TOQUE_MAX, CAPTURA, SP_LABEL,
          REPLAY_SEC, REPLAY_HZ, REPLAY_SPEED, COLORES_HUMANO, DISPOSITIVOS, GOL_ESPERA }
                                               from './config/rules.js';
 // --- Núcleo ---
-import { Vec3 }                               from './core/math.js';
+import { Vec3, Vec2 }                               from './core/math.js';
 import { emitir, drenarEventos, limpiarEventos } from './core/events.js';
 import { crearPresentador }                   from './ui/presenter.js';
 import { crearReplayView }                    from './render/replayView.js';
@@ -22,7 +22,8 @@ import { tickTimers }                         from './core/systems/movement.js';
 import { playerId, jugadorDeAsiento, esHumano, asignarControl as asignarControlSeat }
                                               from './core/systems/seats.js';
 import { crearJugador }                       from './core/player.js';
-import { construirMalla }                     from './render/playerMesh.js';
+import { construirMalla, ocultarMalla, limpiarMallas }
+                                              from './render/playerMesh.js';
 import { sincronizarAnillos }                 from './render/rings.js';
 import { syncPlayerView, anotarEventos, reiniciarGestos, tickGestos }
                                                  from './render/playerView.js';
@@ -349,7 +350,7 @@ function placeKickoff(kickTeam){
   separarJugadores(1.5);                                // sin jugadores encimados
   m.bola.pos.set(0,BALL_R,0); m.bola.vel.set(0,0,0);
   m.bola.kickLock=0;        // si no, el saque hereda el bloqueo de re-toque anterior
-  camTarget.copy(m.bola.pos); m.S.camSnap=true;   // cámara ya colocada en el saque
+  m.S.camSnap=true;        // la vista colocará la cámara de golpe en el próximo frame
   m.S.possession = kickTeam;
   asignarPosicionesIniciales();
 }
@@ -402,7 +403,7 @@ function setFormation(ti, nombre){
   m.S.formation[ti]=nombre;
   const forma=FORMACIONES[nombre];
   m.teams[ti].forEach((p,i)=>{ const f=forma[i]; if(f){ p.formation=f; p.role=f.r; } });
-  if(ti===0){ emitir(m, 'FORMACION', { nombre }); const t=document.getElementById('formTag'); if(t) t.textContent=nombre; }
+  if(ti===0) emitir(m, 'FORMACION', { nombre });
 }
 function cycleFormation(){
   const i=NOMBRES_FORM.indexOf(m.S.formation[0]);
@@ -599,7 +600,8 @@ function commitFoul(offender, victim){
   m.S.phase='falta'; m.S.phaseT=0;
 }
 function sendOff(p){
-  p.expelled=true; p.mesh.visible=false;
+  p.expelled=true;
+  emitir(m, 'EXPULSION', { playerId: p.playerId, team: p.team });
   const arr=m.teams[p.team]; const i=arr.indexOf(p); if(i>=0) arr.splice(i,1);
   if(p.ownerSeat!=null){ const h=m.S.humans.find(x=>x.seatId===p.ownerSeat); p.ownerSeat=null;
     if(h) h.playerId=null;
@@ -1216,7 +1218,10 @@ const AIM_X = (()=>{
 function updateCamera(dt){
   G.camCalls++;
   if(posesRepeticion){ replayCamera(dt); return; }       // cámara cinematográfica
-  camTarget.lerp(m.bola.pos, Math.min(1,dt*2.6));
+  // `camSnap` lo enciende la simulación al colocar un saque; el salto de
+  // cámara lo da la VISTA, que es quien sabe dónde está mirando.
+  if(m.S.camSnap) camTarget.copy(m.bola.pos);
+  else camTarget.lerp(m.bola.pos, Math.min(1,dt*2.6));
   // encuadre más cerrado en saques y jugadas paradas (dramatismo)
   const objetivo = (m.S.phase==='kickoff'||m.S.phase==='setpiece') ? 50 : VIEW_LEN;
   if(m.S.camSnap) G.curView = objetivo;
@@ -1274,6 +1279,9 @@ function updateClock(){
 }
 
 // una barra de energía por jugador humano
+// Las barras son nodos del DOM: viven aquí, no dentro del asiento. Un asiento
+// viaja por la red; no puede llevar un <div> dentro.
+const barras = new Map();     // seatId -> nodo .bar2
 function buildStaminaUI(){
   const w=document.getElementById('stamwrap');
   w.innerHTML='';
@@ -1284,15 +1292,16 @@ function buildStaminaUI(){
       ${i===0?'· <b id="formTag" style="color:var(--acento)">'+m.S.formation[0]+'</b>':''}</div>
       <div class="bar2"><i></i></div>`;
     w.appendChild(row);
-    h._bar = row.querySelector('.bar2');
+    barras.set(h.seatId, row.querySelector('.bar2'));
   });
 }
 function updateStaminaUI(){
   for(const h of m.S.humans){
-    const p=jugadorDeAsiento(m.teams, h); if(!p||!h._bar) continue;
+    const bar = barras.get(h.seatId);
+    const p=jugadorDeAsiento(m.teams, h); if(!p||!bar) continue;
     const pct=Math.round(p.stamina*100);
-    h._bar.firstElementChild.style.width = pct+'%';
-    h._bar.className = 'bar2 ' + (pct<25?'low' : pct<55?'mid' : '');
+    bar.firstElementChild.style.width = pct+'%';
+    bar.className = 'bar2 ' + (pct<25?'low' : pct<55?'mid' : '');
   }
 }
 
@@ -1322,7 +1331,9 @@ function updatePhase(dt){
       else { m.S.phase='play'; m.S.phaseT=0; }
     }
   } else if(m.S.phase==='full'){
-    if(m.S.phaseT > 5) cerrarPartido();      // 5 s medidos en ticks, no en reloj de pared
+    // 5 s medidos en ticks, no en reloj de pared. La simulación sólo avisa:
+    // apagar el HUD y avanzar la liga es cosa de la app, no de las reglas.
+    if(m.S.phaseT > 5){ m.S.phase='cierre'; m.S.phaseT=0; emitir(m, 'CIERRE'); }
   } else if(m.S.phase==='goal'){
     // La simulación sólo ESPERA. Qué se muestra durante esa espera (celebración,
     // repetición) es cosa de la vista: el partido ya no depende de una animación.
@@ -1419,6 +1430,9 @@ const presentar = crearPresentador({
   announce, updateScorebug, updateCardsUI, burstConfetti,
   playWhistle, playKick, crowdCheer, mostrarTarjeta, teamName,
   nombreGoleador: (team, idx) => m.names[team][idx] || 'Anónimo',
+  ocultarJugador: ocultarMalla,
+  cerrarPartido,
+  etiquetaFormacion: nombre => { const t=document.getElementById('formTag'); if(t) t.textContent=nombre; },
 });
 
 function stepSim(dt){
@@ -1570,8 +1584,8 @@ function crearHumanos(n){
       device: DISPOSITIVOS[i].id,
       slot: slotsPorDefecto[i],
       color: COLORES_HUMANO[i],
-      controlled:null, _bar:null,
-      input:{ move:new THREE.Vector2(), pass:false, shoot:false, sprint:false,
+      controlled:null,
+      input:{ move:new Vec2(), pass:false, shoot:false, sprint:false,
               switch:false, shootHold:false, _p:false, _s:false, _w:false }
     });
   }
@@ -1658,7 +1672,7 @@ function setupHUDTeams(){
 function startMatch(){
   ensureAudio();
   // limpiar equipos previos
-  m.teams.forEach(arr=>arr.forEach(p=>G.scene.remove(p.mesh))); m.teams[0]=[]; m.teams[1]=[];
+  limpiarMallas(G.scene); m.teams[0]=[]; m.teams[1]=[];   // incluye a los expulsados, que ya no están en teams
   spawnTeams();
   m.S.score=[0,0]; m.S.clock=0; m.S.half=1; m.lastScorer=null;
   m.cards[0]={a:0,r:0}; m.cards[1]={a:0,r:0}; m.S.setPiece=null; limpiarEventos(m);
@@ -1781,7 +1795,7 @@ function boot(){
     stepN(n){ for(let i=0;i<n;i++) stepSim(DT); return hashEstado(); },
     resetGolden(semilla=12345){              // mismo reinicio que golden(), sin correr
       m.S.humans=[]; m.sembrar(semilla);
-      m.teams.forEach(arr=>arr.forEach(pl=>G.scene.remove(pl.mesh)));
+      limpiarMallas(G.scene);
       m.teams[0]=[]; m.teams[1]=[]; spawnTeams();
       m.S.score=[0,0]; m.S.clock=0; m.S.half=1; m.lastScorer=null;
       m.cards[0]={a:0,r:0}; m.cards[1]={a:0,r:0}; m.S.setPiece=null;
@@ -1840,7 +1854,7 @@ function boot(){
       // Mundo COMPLETAMENTE limpio. Reutilizar los jugadores no sirve: arrastran
       // energía gastada y temporizadores, y sendOff() los saca del array, así que
       // tras una roja la siguiente corrida empezaría con menos jugadores.
-      m.teams.forEach(arr=>arr.forEach(pl=>G.scene.remove(pl.mesh)));
+      limpiarMallas(G.scene);
       m.teams[0]=[]; m.teams[1]=[]; spawnTeams();
       m.S.score=[0,0]; m.S.clock=0; m.S.half=1; m.lastScorer=null;
       m.cards[0]={a:0,r:0}; m.cards[1]={a:0,r:0}; m.S.setPiece=null;
