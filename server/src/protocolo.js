@@ -17,7 +17,13 @@
 
 // --- cliente -> servidor ---
 export const C = {
-  UNIR:    'unir',       // { codigo?, nombre }        codigo vacío = crear sala
+  // Cuentas. Jugar solo o en una misma máquina NO pide cuenta; entrar a una
+  // sala, sí. El registro aparece en el momento exacto en que hace falta.
+  REGISTRO:'registro',   // { nombre, clave }
+  ENTRAR:  'entrar',     // { nombre, clave }
+  SESION:  'sesion',     // { token }                  reanudar sin reescribir la clave
+  SALIR:   'salir',      // { }
+  UNIR:    'unir',       // { codigo? }                codigo vacío = crear sala
   ASIENTO: 'asiento',    // { equipo, puesto }         reclamar un puesto
   LISTO:   'listo',      // { }                        empezar el partido
   CMD:     'cmd',        // { seq, tick, mx, mz, buttons }
@@ -26,6 +32,7 @@ export const C = {
 
 // --- servidor -> cliente ---
 export const S = {
+  SESION:     'sesion',     // { token, nombre, userId }
   BIENVENIDA: 'bienvenida', // { codigo, clienteId, semilla, local, visitante }
   SALA:       'sala',       // { jugadores:[{clienteId,nombre,equipo,puesto,listo}], fase }
   ARRANQUE:   'arranque',   // { semilla, formaciones, asientos:[...] }

@@ -14,12 +14,14 @@ import { randomUUID }   from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { Sala } from './sala.js';
 import { C, S, codigoSala } from './protocolo.js';
+import { crearAutenticador } from './auth/index.js';
 import { DT } from '../../src/config/rules.js';
 
 const PUERTO = Number(process.env.PORT || 2567);
 const HZ_ESTADO = 20;                       // snapshots por segundo
 const CADA = Math.round(60 / HZ_ESTADO);    // uno cada 3 ticks
 
+const auth = crearAutenticador();
 const salas = new Map();                    // codigo -> Sala
 const deCliente = new Map();                // ws -> { clienteId, codigo }
 
@@ -50,9 +52,9 @@ const estadoSala = sala => ({
 
 wss.on('connection', ws => {
   const clienteId = randomUUID().slice(0, 8);
-  deCliente.set(ws, { clienteId, codigo: null });
+  deCliente.set(ws, { clienteId, codigo: null, cuenta: null });
 
-  ws.on('message', bruto => {
+  ws.on('message', async bruto => {
     let msg;
     try { msg = JSON.parse(bruto); } catch { return; }
     const info = deCliente.get(ws);
@@ -60,7 +62,33 @@ wss.on('connection', ws => {
     const sala = info.codigo ? salas.get(info.codigo) : null;
 
     switch(msg.t){
+      // --- CUENTAS. Nada de esto se registra en el log: ni la contraseña, ni
+      // el token. Lo único que se escribe es el nombre al entrar a una sala.
+      case C.REGISTRO:
+      case C.ENTRAR: {
+        const fn = msg.t === C.REGISTRO ? auth.registrar : auth.entrar;
+        const r = await fn(msg.nombre, msg.clave);
+        if(!r.ok) return enviar(ws, S.ERROR, { motivo: r.motivo });
+        info.cuenta = { userId: r.userId, nombre: r.nombre };
+        enviar(ws, S.SESION, { token: r.token, nombre: r.nombre, userId: r.userId });
+        break;
+      }
+      case C.SESION: {
+        const u = auth.verificar(msg.token);
+        if(!u) return enviar(ws, S.ERROR, { motivo:'la sesión caducó; entrá otra vez' });
+        info.cuenta = u;
+        enviar(ws, S.SESION, { token: msg.token, nombre: u.nombre, userId: u.userId });
+        break;
+      }
+      case C.SALIR: {
+        if(msg.token) auth.salir(msg.token);
+        info.cuenta = null;
+        break;
+      }
+
       case C.UNIR: {
+        // AQUÍ es donde la cuenta se vuelve obligatoria, y en ningún sitio antes.
+        if(!info.cuenta) return enviar(ws, S.ERROR, { motivo:'para jugar online hace falta una cuenta' });
         let s = msg.codigo ? salas.get(String(msg.codigo).toUpperCase()) : null;
         if(msg.codigo && !s) return enviar(ws, S.ERROR, { motivo:'no existe esa sala' });
         if(!s){
@@ -71,7 +99,12 @@ wss.on('connection', ws => {
           console.log(`[sala ${cod}] creada`);
         }
         if(s.llena) return enviar(ws, S.ERROR, { motivo:'la sala está llena' });
-        s.entra(clienteId, ws, String(msg.nombre || 'Invitado').slice(0, 16));
+        // Una cuenta, un asiento por sala: en el sofá cuatro personas comparten
+        // una cuenta, pero online cada asiento es una cuenta distinta.
+        for(const [, o] of s.clientes)
+          if(o.userId === info.cuenta.userId)
+            return enviar(ws, S.ERROR, { motivo:'esa cuenta ya está en la sala' });
+        s.entra(clienteId, ws, info.cuenta.nombre, info.cuenta.userId);
         info.codigo = s.codigo;
         enviar(ws, S.BIENVENIDA, { codigo:s.codigo, clienteId, semilla:s.semilla });
         difundir(s, S.SALA, estadoSala(s));
@@ -88,6 +121,7 @@ wss.on('connection', ws => {
         if(!sala || sala.fase !== 'lobby') return;
         if(!sala.arrancar()) return enviar(ws, S.ERROR, { motivo:'nadie eligió puesto' });
         console.log(`[sala ${sala.codigo}] arranca con ${sala.clientes.size} jugador(es)`);
+        for(const [, c] of sala.clientes) if(c.userId) auth.contarPartido(c.userId);
         difundir(sala, S.ARRANQUE, {
           semilla: sala.semilla,
           asientos: [...sala.clientes.entries()].map(([id, c]) => ({ clienteId:id, seatId:c.seatId,

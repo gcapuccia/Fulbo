@@ -32,6 +32,58 @@ npm run dev          # ws://localhost:2567
 - **Desconectarse no interrumpe el partido**: se suelta el asiento y la IA
   retoma a ese jugador en el mismo tick.
 
+## Cuentas
+
+Jugar solo, el torneo o cuatro personas en la misma máquina **no** piden
+cuenta. Entrar a una sala, **sí** — y el registro aparece en el momento exacto
+en que hace falta, no en la pantalla de carga.
+
+```bash
+npm run probar      # 14 comprobaciones del almacén + 9 de extremo a extremo
+```
+
+Dos adaptadores detrás de la misma frontera (`src/auth/index.js`), que sólo
+sabe hacer `verificar(token) -> {userId, nombre}`:
+
+| `AUTH` | qué hace | para qué sirve |
+|---|---|---|
+| `local` (por defecto) | almacén propio en `datos/cuentas.json` | tu máquina y tus amigos |
+| `supabase` | valida el JWT que emite Supabase Auth | abrirlo al público |
+
+### El almacén local, con sus límites dichos
+
+Hace bien la parte criptográfica: **scrypt** con sal por usuario, comparación
+en **tiempo constante**, y un hash calculado igualmente cuando el usuario no
+existe para que responder tarde lo mismo en los dos casos (si no, se podría
+averiguar quién tiene cuenta midiendo el tiempo). Cinco intentos fallidos
+bloquean quince minutos. La contraseña no se escribe en ningún log ni en el
+archivo: sólo la sal y el hash. `datos/` está fuera de git.
+
+Lo que **no** tiene, y por eso no es para desconocidos:
+
+- **No hay recuperación de contraseña.** No se pide correo —menos datos
+  personales que custodiar— así que si alguien la olvida hay que borrar su
+  cuenta a mano.
+- No hay verificación de identidad ni rotación centralizada de sesiones.
+- Es un JSON en disco, no una base de datos.
+
+`ARQUITECTURA.md` §7 dice, con razón, "no escribas tu propia autenticación".
+Esto la escribe igual, para que el modo online funcione hoy sin depender de
+darte de alta en ningún servicio. Para abrirlo al público:
+
+```bash
+AUTH=supabase SUPABASE_JWT_SECRET=... npm start
+```
+
+y entonces las contraseñas no las custodiás vos.
+
+### Cómo encaja con las salas
+
+La cuenta se queda en el **borde**: decide quién puede ocupar un asiento, no
+cómo se juega. El núcleo de simulación no sabe qué es un usuario — sólo conoce
+asientos. `clienteId` es la conexión; `userId` es la cuenta, y sobrevive a la
+conexión. Una cuenta no puede ocupar dos asientos de la misma sala.
+
 ## Dónde alojarlo
 
 En Vercel **no**: es serverless y sin estado, y una sala es un proceso vivo

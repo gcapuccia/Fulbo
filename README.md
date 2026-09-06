@@ -182,11 +182,21 @@ npm run servidor             # desde la raíz: ws://localhost:2567
 npm run dev                  # el juego, en otra terminal
 ```
 
-En el menú, **🌐 Jugar online** → *Crear sala* te da un código de cuatro
-letras (ej. `HNF4`). Quien quiera jugar entra con ese código, cada uno elige
-equipo y puesto, y uno pulsa *Empezar partido*. Los puestos que nadie tome los
-juega la IA de siempre, así que una sala es jugable con dos personas o con
-ocho — no hacen falta 22.
+En el menú, **🌐 Jugar online** te pide primero una cuenta: nombre y
+contraseña, y listo. **Jugar solo, el torneo y varios en la misma máquina no
+piden nada** — el registro aparece justo en el momento en que hace falta, no
+en la pantalla de carga. La sesión queda guardada, así que la próxima vez
+entrás directo.
+
+No se pide correo (menos datos tuyos que guardar), y el precio de eso es que
+**no hay recuperación de contraseña**: si la perdés, hay que borrar la cuenta
+a mano en el servidor. Los detalles, y cómo delegar todo esto en Supabase para
+abrirlo al público, están en [`server/README.md`](server/README.md).
+
+Ya dentro, *Crear sala* te da un código de cuatro letras (ej. `WBPC`). Quien
+quiera jugar entra con ese código, cada uno elige equipo y puesto, y uno pulsa
+*Empezar partido*. Los puestos que nadie tome los juega la IA de siempre, así
+que una sala es jugable con dos personas o con ocho — no hacen falta 22.
 
 Si alguien cierra la pestaña, su jugador **no se queda plantado**: se libera
 el asiento y la IA lo retoma en el mismo tick. El partido no se interrumpe.
@@ -199,6 +209,10 @@ Para apuntar a un servidor que no sea el de tu máquina:
 - Dos pestañas en la sala `HNF4`: sobre 35 ticks comunes, la huella del estado
   que recibió cada una es la **misma** (`9ffac5ea`). Ven exactamente el mismo
   partido.
+- Dos cuentas distintas (`ana-prueba` y `beto-prueba`) en la sala `WBPC`, cada
+  una con su asiento. Sin cuenta, el servidor rechaza entrar a cualquier sala.
+- La contraseña no aparece ni en el archivo de cuentas, ni en `localStorage`,
+  ni en el log del servidor. Sólo se guardan sal y hash.
 - Un gol marcado por una persona aparece en la otra pantalla con su cartel y
   su marcador.
 - `node scripts/sim90.mjs`: 90 s de partido en Node en **76 ms**, con el mismo

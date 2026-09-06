@@ -40,6 +40,7 @@ import { fijarActivo }                        from './core/activo.js';
 import { BTN, crearComando, encolarComando } from './core/input.js';
 import { aMundo }                             from './input/cameraSpace.js';
 import { crearSesionOnline, botonesDe }       from './app/onlineSession.js';
+import { leerSesion }                         from './app/cuenta.js';
 import { m, usarPartido, partidoActual,
          hashEstado, spawnTeams, placeKickoff, asignarControl, cycleFormation,
          goalDirZ, teamName, startSetPiece, sendOff, showCard, callOffside,
@@ -799,16 +800,29 @@ let posesOnline = null;
 const $on = id => document.getElementById(id);
 function estadoOnline(txt){ const e=$on('onEstado'); if(e) e.textContent = txt; }
 
-function abrirOnline(){
+// Se muestra la caja de la cuenta o la de las salas, según haya sesión.
+function pintarCuenta(){
+  const dentro = !!(online && online.cuenta);
+  $on('cajaCuenta').classList.toggle('hidden', dentro);
+  $on('cajaSalas').classList.toggle('hidden', !dentro);
+  if(dentro) $on('cuQuien').textContent = online.cuenta.nombre;
+  else $on('onSala').classList.add('hidden');
+}
+
+async function abrirOnline(){
   $on('online').classList.remove('hidden');
   $on('menu').classList.add('hidden');
-  $on('onNombre').value = perfil.apodo || '';
   const sel = $on('onPuesto');
   sel.innerHTML = etiquetasSlots(m.S.formation[0])
     .map((t,i)=> i===0 ? '' : `<option value="${i}">${t}</option>`).join('');
   sel.value = '9';
+  const guardada = leerSesion();
+  if(guardada?.nombre) $on('cuNombre').value = guardada.nombre;
+  pintarCuenta();
+  if(!online) await conectarOnline();     // conectar ya reanuda la sesión guardada
 }
 function cerrarOnline(){
+  // se cierra el socket pero NO la sesión: al volver, sigue identificado
   if(online){ online.cerrar(); online = null; }
   $on('online').classList.add('hidden');
   $on('menu').classList.remove('hidden');
@@ -817,7 +831,8 @@ function cerrarOnline(){
 
 function pintarSala(){
   if(!online) return;
-  $on('onSala').classList.remove('hidden');
+  $on('onSala').classList.toggle('hidden', !online.codigo);   // sólo si estás en una
+  if(!online.codigo) return;
   $on('onCodSala').textContent = online.codigo || '····';
   $on('onPing').textContent = online.ping ? `${online.ping} ms` : '';
   const etiquetas = etiquetasSlots(m.S.formation[0]);
@@ -829,24 +844,43 @@ function pintarSala(){
   }).join('') || '<div class="salarow"><b>Nadie más todavía</b></div>';
 }
 
-async function conectarOnline(codigo){
-  const nombre = ($on('onNombre').value || 'Invitado').slice(0,16);
-  setApodo(nombre);
+async function conectarOnline(){
+  if(online) return true;
   estadoOnline('Conectando…');
   try {
-    online = crearSesionOnline({ url: URL_SERVIDOR, nombre });
-    online.bus.al('sala', () => pintarSala())
-              .al('bienvenida', () => { estadoOnline('Conectado.'); pintarSala(); })
+    online = crearSesionOnline({ url: URL_SERVIDOR });
+    // Los manejadores de la INTERFAZ se enganchan DESPUÉS de conectar, porque
+    // conectar() engancha primero los de la sesión: si se hiciera al revés,
+    // pintarCuenta() correría antes de que `online.cuenta` existiera y se
+    // quedaría mostrando el formulario de entrada con la sesión ya iniciada.
+    await online.conectar();
+    online.bus.al('sesion', msg => { estadoOnline(`Sesión iniciada como ${msg.nombre}.`);
+                                     setApodo(msg.nombre); pintarCuenta(); })
+              .al('sala', () => pintarSala())
+              .al('bienvenida', () => { estadoOnline('En la sala.'); pintarSala(); })
               .al('error', msg => estadoOnline('⚠ ' + msg.motivo))
               .al('arranque', msg => arrancarPartidoOnline(msg))
               .al('_cerrado', () => { estadoOnline('Se cortó la conexión.'); });
-    await online.conectar();
-    if(codigo) online.unirseA(codigo);
-    setInterval(() => { if(online) { online.medirPing(); pintarSala(); } }, 2000);
+    estadoOnline('Conectado. Entrá con tu cuenta o creá una.');
+    setInterval(() => { if(online?.cuenta){ online.medirPing(); pintarSala(); } }, 2000);
+    return true;
   } catch(e){
     online = null;
-    estadoOnline('No hay servidor en ' + URL_SERVIDOR + '. Levantalo con: cd server && npm run dev');
+    estadoOnline('No hay servidor en ' + URL_SERVIDOR + '. Levantalo con: npm run servidor');
+    return false;
   }
+}
+
+// El registro y la entrada NUNCA guardan la contraseña: se manda, el servidor
+// devuelve un token de sesión y el campo se vacía en el acto.
+async function accionCuenta(crear){
+  if(!await conectarOnline()) return;
+  const nombre = $on('cuNombre').value.trim();
+  const clave  = $on('cuClave').value;
+  if(!nombre || !clave) return estadoOnline('Faltan el nombre o la contraseña.');
+  estadoOnline(crear ? 'Creando cuenta…' : 'Entrando…');
+  if(crear) online.registrar(nombre, clave); else online.identificarse(nombre, clave);
+  $on('cuClave').value = '';
 }
 
 // El cliente crea los mismos 22 jugadores con sus mallas, pero NO los simula:
@@ -911,8 +945,13 @@ function aplicarEstadoOnline(frameDt){
 
 $on('playOnline').onclick = () => abrirOnline();
 $on('onSalir').onclick    = () => cerrarOnline();
-$on('onCrear').onclick    = () => conectarOnline(null);
-$on('onUnir').onclick     = () => conectarOnline(($on('onCodigo').value||'').trim().toUpperCase());
+$on('cuCrear').onclick    = () => accionCuenta(true);
+$on('cuEntrar').onclick   = () => accionCuenta(false);
+$on('cuClave').onkeydown  = e => { if(e.key === 'Enter') accionCuenta(false); };
+$on('cuSalir').onclick    = () => { if(online){ online.cerrarSesion(); pintarCuenta();
+                                    estadoOnline('Sesión cerrada.'); } };
+$on('onCrear').onclick    = () => { if(online?.cuenta) online.crearSala(); };
+$on('onUnir').onclick     = () => { if(online?.cuenta) online.unirseA(($on('onCodigo').value||'').trim().toUpperCase()); };
 $on('onTomar').onclick    = () => { if(online) online.pedirAsiento(+$on('onEquipo').value, +$on('onPuesto').value); };
 $on('onEmpezar').onclick  = () => { if(online) online.empezar(); else estadoOnline('Primero creá o entrá a una sala.'); };
 $on('onCopiar').onclick   = () => { if(online?.codigo) navigator.clipboard?.writeText(online.codigo); };

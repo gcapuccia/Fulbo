@@ -29,8 +29,10 @@ export class Sala {
   get llena(){ return this.clientes.size >= 4; }
   get vacia(){ return this.clientes.size === 0; }
 
-  entra(clienteId, ws, nombre){
-    this.clientes.set(clienteId, { ws, nombre, seatId: null, listo: false, ultimoSeq: -1 });
+  entra(clienteId, ws, nombre, userId){
+    // `userId` es la CUENTA; `clienteId` es esta conexión concreta. Son cosas
+    // distintas: la misma cuenta puede reconectar con otro clienteId.
+    this.clientes.set(clienteId, { ws, nombre, userId, seatId: null, listo: false, ultimoSeq: -1 });
   }
 
   sale(clienteId){
@@ -75,7 +77,8 @@ export class Sala {
     conPuesto.forEach(([id, c], i) => {
       const h = this.m.S.humans[i];
       h.team = c.equipo; h.slot = c.puesto; h.nombre = c.nombre;
-      h.controllerId = id;               // en local era el dispositivo; aquí, la persona
+      h.controllerId = id;               // en local era el dispositivo; aquí, la conexión
+      h.userId = c.userId;               // y la cuenta, que sobrevive a la conexión
       c.seatId = h.seatId;
     });
     spawnTeams();

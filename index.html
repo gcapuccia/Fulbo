@@ -121,17 +121,38 @@
     <p class="ohint">Creá una sala y pasale el código a quien quiera jugar,
     o entrá con el código que te pasaron.</p>
 
-    <div class="perfilbox">
-      <label for="onNombre">Tu nombre</label>
-      <input id="onNombre" type="text" maxlength="16" placeholder="Invitado" autocomplete="off">
+    <!-- Paso 1: la cuenta. Sólo hace falta para jugar online. -->
+    <div class="perfilbox" id="cajaCuenta">
+      <label for="cuNombre">Nombre de jugador</label>
+      <input id="cuNombre" type="text" maxlength="16" placeholder="tu-nombre" autocomplete="username">
+      <label for="cuClave" style="margin-top:10px">Contraseña</label>
+      <input id="cuClave" type="password" maxlength="72" placeholder="8 caracteres o más"
+             autocomplete="current-password">
+      <div class="onfila">
+        <button id="cuEntrar" class="prim">Entrar</button>
+        <button id="cuCrear">Crear cuenta</button>
+      </div>
+      <p class="ohint" style="margin:10px 0 0;text-align:left">
+        Jugar solo, el torneo y varios en esta misma máquina <b>no</b> necesitan cuenta.
+        Sólo hace falta para entrar a una sala.<br>
+        No se pide correo, así que <b>no hay forma de recuperar la contraseña</b>: anotala.
+      </p>
+    </div>
+
+    <!-- Paso 2: la sala. Sólo se ve con la cuenta iniciada. -->
+    <div class="perfilbox hidden" id="cajaSalas">
+      <div class="cuentacab">
+        <span>Jugando como</span><b id="cuQuien">—</b>
+        <button id="cuSalir">cerrar sesión</button>
+      </div>
       <div class="onfila">
         <button id="onCrear" class="prim">Crear sala</button>
         <input id="onCodigo" type="text" maxlength="5" placeholder="CÓDIGO" autocomplete="off"
                style="text-transform:uppercase;text-align:center;letter-spacing:4px;max-width:130px">
         <button id="onUnir">Entrar</button>
       </div>
-      <p class="ohint" id="onEstado" style="margin:10px 0 0">Sin conectar.</p>
     </div>
+    <p class="ohint" id="onEstado" style="margin:12px 0 0">Sin conectar.</p>
 
     <div id="onSala" class="hidden">
       <div class="salacab">

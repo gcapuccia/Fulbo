@@ -625,6 +625,30 @@ navegador                    servidor de salas            proveedor de identidad
 - El núcleo recibe `InputCommand` por asiento y **no cambia una línea** entre
   local y online. Esa es la ventaja de haber separado simulación y presentación.
 
+### ✅ Lo que se construyó (2026-09-06)
+
+Se siguió el consejo a medias, y conviene decir en qué mitad. La **frontera**
+está donde debe: `server/src/auth/index.js` sólo sabe hacer
+`verificar(token) → {userId, nombre}`, y de dónde salga ese token no le importa
+a nadie más. Hay dos adaptadores:
+
+- `AUTH=supabase` valida el JWT de Supabase Auth. Es el camino recomendado
+  para abrirlo al público y no requiere tocar ni una línea del juego.
+- `AUTH=local` (por defecto) guarda las cuentas en `datos/cuentas.json`.
+
+Sí, eso último es autenticación propia, que es justo lo que este documento
+desaconseja. Se hizo para que el modo online **funcione hoy** sin obligar a
+darse de alta en ningún servicio, y con los límites dichos en voz alta en
+`server/README.md`: scrypt con sal, comparación en tiempo constante, hash
+calculado también cuando el usuario no existe (para no filtrar quién está
+registrado por el tiempo de respuesta) y bloqueo tras cinco intentos — pero
+**sin recuperación de contraseña, sin verificación y sobre un JSON en disco**.
+Para desconocidos, `AUTH=supabase`.
+
+Lo que sí se respetó al pie de la letra: **el núcleo no sabe qué es una
+cuenta**. Sigue conociendo sólo asientos. `clienteId` es la conexión, `userId`
+es la cuenta, y una cuenta no puede ocupar dos asientos de la misma sala.
+
 ### Orden recomendado
 
 1. **Ahora**: perfil local anónimo (apodo + preferencias en `localStorage`).

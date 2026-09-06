@@ -14,6 +14,7 @@
 import { crearTransporte }     from '../net/transport.js';
 import { interpolarSnapshot }  from '../core/snapshot.js';
 import { crearComando, BTN }   from '../core/input.js';
+import { guardarSesion, leerSesion, olvidarSesion } from './cuenta.js';
 
 const RETRASO = 0.10;          // segundos de búfer
 
@@ -26,12 +27,15 @@ export function crearSesionOnline({ url, nombre }){
 
   const s = {
     bus, codigo: null, clienteId: null, seatId: null,
+    cuenta: null,              // { userId, nombre } una vez identificado
     jugadores: [], fase: 'lobby', ack: -1, ping: 0,
     ultimo: null,              // último snapshot crudo (marcador, reloj, fase)
 
     async conectar(){
       await bus.conectar();
-      bus.al('bienvenida', m => { s.codigo = m.codigo; s.clienteId = m.clienteId; })
+      bus.al('sesion', m => { s.cuenta = { userId: m.userId, nombre: m.nombre };
+                              guardarSesion(m.token, m.nombre); })
+         .al('bienvenida', m => { s.codigo = m.codigo; s.clienteId = m.clienteId; })
          .al('sala',       m => { s.jugadores = m.jugadores; s.fase = m.fase;
                                   const yo = m.jugadores.find(j => j.clienteId === s.clienteId);
                                   if(yo && yo.seatId != null) s.seatId = yo.seatId; })
@@ -48,11 +52,23 @@ export function crearSesionOnline({ url, nombre }){
            })
          .al('eventos',    m => { eventos.push(...m.lista); })
          .al('pong',       m => { s.ping = Math.round(performance.now() - m.t0); });
-      bus.enviar('unir', { nombre });
+      // Al conectar NO se entra a ninguna sala: primero hay que identificarse.
+      // Si había una sesión guardada, se reanuda sola.
+      const guardada = leerSesion();
+      if(guardada?.token) bus.enviar('sesion', { token: guardada.token });
       return s;
     },
 
-    unirseA(codigo){ bus.enviar('unir', { codigo, nombre }); },
+    registrar(nombre, clave){ bus.enviar('registro', { nombre, clave }); },
+    identificarse(nombre, clave){ bus.enviar('entrar', { nombre, clave }); },
+    cerrarSesion(){
+      const g = leerSesion();
+      bus.enviar('salir', { token: g?.token });
+      olvidarSesion(); s.cuenta = null;
+    },
+
+    crearSala(){ bus.enviar('unir', {}); },
+    unirseA(codigo){ bus.enviar('unir', { codigo }); },
     pedirAsiento(equipo, puesto){ bus.enviar('asiento', { equipo, puesto }); },
     empezar(){ bus.enviar('listo'); },
     medirPing(){ bus.enviar('ping', { t0: performance.now() }); },

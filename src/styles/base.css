@@ -327,3 +327,9 @@
 .salarow.yo b{color:var(--acento);}
 #netstate{position:fixed;left:12px;bottom:12px;z-index:20;font-size:11px;
   background:#0b1422cc;border-radius:20px;padding:6px 12px;letter-spacing:1px;}
+.cuentacab{display:flex;align-items:center;gap:8px;font-size:11px;opacity:.85;
+  text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;}
+.cuentacab b{color:var(--acento);font-size:14px;letter-spacing:0;text-transform:none;}
+.cuentacab button{margin-left:auto;padding:5px 10px;border:none;border-radius:7px;cursor:pointer;
+  font-size:10px;font-weight:800;background:#ffffff16;color:#fff;font-family:inherit;}
+#online .perfilbox label{margin-top:0;}
