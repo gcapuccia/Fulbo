@@ -21,6 +21,7 @@ import { crearReplayView }                    from './render/replayView.js';
 import { tickTimers }                         from './core/systems/movement.js';
 import { playerId, jugadorDeAsiento, esHumano, asignarControl as asignarControlSeat }
                                               from './core/systems/seats.js';
+import { sincronizarAnillos }                 from './render/rings.js';
 import { syncPlayerView, anotarEventos, reiniciarGestos, tickGestos }
                                                  from './render/playerView.js';
 import { binds, guardarBinds, restaurarBinds, nombreTecla, ACCIONES }
@@ -489,13 +490,6 @@ function nearestToBall(ti){
 //  JUGADORES HUMANOS (multijugador local: teclado y mandos)
 // ---------------------------------------------------------------------------
 
-function refreshRings(){
-  for(const arr of m.teams) for(const p of arr){
-    const asiento = p.ownerSeat != null ? m.S.humans.find(x=>x.seatId===p.ownerSeat) : null;
-    p.ring.visible = !!asiento;
-    if(asiento) p.ring.material.color.set(asiento.color);
-  }
-}
 // asigna a un humano el control de un jugador (liberando el anterior)
 function asignarControl(h, p){
   asignarControlSeat(m.teams, h, p);
@@ -518,7 +512,6 @@ function asignarPosicionesIniciales(){
     const p = arr[h.slot] || arr[9] || arr[1];
     if(p){ p.ownerSeat = null; asignarControl(h, p); }
   }
-  refreshRings();
 }
 function humanoDe(p){ return p && p.ownerSeat!=null ? m.S.humans.find(x=>x.seatId===p.ownerSeat) : null; }
 
@@ -528,7 +521,7 @@ function setFormation(ti, nombre){
   m.S.formation[ti]=nombre;
   const forma=FORMACIONES[nombre];
   m.teams[ti].forEach((p,i)=>{ const f=forma[i]; if(f){ p.formation=f; p.role=f.r; } });
-  if(ti===0){ emitir('FORMACION', { nombre }); const t=document.getElementById('formTag'); if(t) t.textContent=nombre; }
+  if(ti===0){ emitir(m, 'FORMACION', { nombre }); const t=document.getElementById('formTag'); if(t) t.textContent=nombre; }
 }
 function cycleFormation(){
   const i=NOMBRES_FORM.indexOf(m.S.formation[0]);
@@ -621,8 +614,8 @@ function startSetPiece(type, team, x, z){
   m.S.setPiece = { type, team, taker, x, z, taken:false };
   positionForSetPiece(type, team, x, z, taker);
   // si hay un humano en el equipo que saca, le damos el ejecutor
-  if(taker){ const h=m.S.humans.find(x=>x.team===team); if(h){ asignarControl(h,taker); refreshRings(); } }
-  emitir('SAQUE', { etiqueta: SP_LABEL[type], team });
+  if(taker){ const h=m.S.humans.find(x=>x.team===team); if(h) asignarControl(h,taker); }
+  emitir(m, 'SAQUE', { etiqueta: SP_LABEL[type], team });
 }
 
 // coloca a los 22 jugadores de forma coherente con la jugada
@@ -729,11 +722,11 @@ function sendOff(p){
   const arr=m.teams[p.team]; const i=arr.indexOf(p); if(i>=0) arr.splice(i,1);
   if(p.ownerSeat!=null){ const h=m.S.humans.find(x=>x.seatId===p.ownerSeat); p.ownerSeat=null;
     if(h) h.playerId=null;
-    asignarControl(h, masCercanoLibre(h.team, h)); refreshRings(); }
+    asignarControl(h, masCercanoLibre(h.team, h)); }
 }
 function showCard(card){
-  if(!card){ emitir('FALTA'); return; }
-  emitir('TARJETA', { card });
+  if(!card){ emitir(m, 'FALTA'); return; }
+  emitir(m, 'TARJETA', { card });
 }
 
 // Pintar la tarjeta es cosa de la vista; el temporizador de 2,2 s es de reloj
@@ -794,7 +787,7 @@ function tryPossession(dt){
     if(owner.ownerSeat==null && !owner.isGK){
       const h = m.S.humans.find(x => x.team === owner.team);
       if(h && h.playerId !== owner.playerId){
-        asignarControl(h, owner); refreshRings();
+        asignarControl(h, owner);
       }
     }
     // ¿el receptor estaba en posición adelantada?
@@ -819,7 +812,7 @@ function kickBall(from, dirVec, power, lift){
   if(m.S._owner){ m.S._owner.hasBall=false; m.S._owner=null; }
   // el saque de centro se considera ejecutado en cuanto se toca el balón
   if(m.S.phase==='kickoff'){ m.S.kickoffTaken=true; m.S.phase='play'; m.S.phaseT=0; }
-  emitir('PATADA', { playerId: from.playerId });
+  emitir(m, 'PATADA', { playerId: from.playerId });
 }
 
 // pase al compañero mejor ubicado hacia el ataque
@@ -844,7 +837,7 @@ function doPass(p){
   kickBall(p, dir, power, Math.min(dist*0.12,3));
   // si el pasador lo lleva un humano, ese humano pasa a controlar al receptor
   const hp = humanoDe(p);
-  if(hp){ asignarControl(hp, best); refreshRings(); m.passReceiver=best; }
+  if(hp){ asignarControl(hp, best); m.passReceiver=best; }
 }
 // --- FUERA DE JUEGO ---
 // Se evalúa en el instante del pase: el receptor está adelantado si supera al
@@ -860,7 +853,7 @@ function isOffside(receptor, pasador){
 }
 function callOffside(receptor){
   m.offsidePend = null;
-  emitir('FUERA_DE_JUEGO', { contra: 1-receptor.team });
+  emitir(m, 'FUERA_DE_JUEGO', { contra: 1-receptor.team });
   startSetPiece('falta', 1-receptor.team, receptor.pos.x, receptor.pos.z);
 }
 
@@ -1137,7 +1130,7 @@ function goalkeeper(p, dt){
     p.holdTimer = 0.9;          // un segundo largo con la pelota controlada
     m.S._owner = null;
     // la vista dibuja la palomita hacia el lado del que venía el balón
-    emitir('ATAJADA', { playerId: p.playerId, lado: Math.sign(m.bola.pos.x - p.pos.x) || 1 });
+    emitir(m, 'ATAJADA', { playerId: p.playerId, lado: Math.sign(m.bola.pos.x - p.pos.x) || 1 });
   }
 }
 
@@ -1228,13 +1221,13 @@ function updateHuman(dt, h){
   const hasBall = m.S._owner===p || (cerca && (!m.S._owner || m.S._owner===p));
 
   if(input.switch && !hasBall){ // cambiar de jugador
-    asignarControl(h, masCercanoLibre(h.team, h)); refreshRings();
+    asignarControl(h, masCercanoLibre(h.team, h));
   }
   if(input.pass){
     if(hasBall) doPass(p);
     else if(canHead(p)) header(p, false);          // cabezazo de despeje/pase
     else if(cerca) h.buffer = { accion:'pase', t:0.30 };   // aún no es mío: lo dejo pedido
-    else { asignarControl(h, masCercanoLibre(h.team, h)); refreshRings(); }
+    else asignarControl(h, masCercanoLibre(h.team, h));
   }
   if(input.shoot){
     if(hasBall) doShoot(p, 0.8);
@@ -1289,7 +1282,7 @@ function slideTackle(p){
     m.bola.vel.set(dir.x*11, 1.3, dir.z*11);
     m.bola.kickLock=0.28; m.lastTouch=p.team;
     if(m.S._owner){ m.S._owner.hasBall=false; m.S._owner=null; }
-    m.S.possession=p.team; emitir('PATADA', { playerId: p.playerId });
+    m.S.possession=p.team; emitir(m, 'PATADA', { playerId: p.playerId });
   } else if(victim && dv<2.5){
     commitFoul(p, victim);   // se lleva al rival por delante -> falta
   }
@@ -1375,7 +1368,7 @@ function scoreGoal(team){
   m.S.score[team]++; m.lastScorer=team;
   m.goalCooldown=3.2;
   m.S.phase='goal'; m.S.phaseT=0;
-  emitir('GOL', { team, scorerIdx: 7 + (m.rng()*3|0) });
+  emitir(m, 'GOL', { team, scorerIdx: 7 + (m.rng()*3|0) });
 }
 
 function announce(big, small){
@@ -1459,7 +1452,7 @@ function updatePhase(dt){
   } else if(m.S.phase==='play'){
     m.S.clock+=dt;
     if(m.S.clock>=m.S.halfLen){
-      if(m.S.half===1){ m.S.half=2; m.S.clock=0; emitir('DESCANSO'); placeKickoff(1); m.S.phase='kickoff'; m.S.phaseT=0; }
+      if(m.S.half===1){ m.S.half=2; m.S.clock=0; emitir(m, 'DESCANSO'); placeKickoff(1); m.S.phase='kickoff'; m.S.phaseT=0; }
       else { endMatch(); }
     }
   }
@@ -1473,7 +1466,7 @@ function endMatch(){
   // servidor no puede depender del reloj de pared para el flujo del partido.
   m.S.phase='full'; m.S.phaseT=0;
   const r = m.S.score[0]===m.S.score[1]?'EMPATE': (m.S.score[0]>m.S.score[1]? `Gana ${m.S.homeTeam.nombre}`:`Gana ${m.S.awayTeam.nombre}`);
-  emitir('FINAL', { texto: `${m.S.homeTeam.nombre} ${m.S.score[0]} — ${m.S.score[1]} ${m.S.awayTeam.nombre} · ${r}` });
+  emitir(m, 'FINAL', { texto: `${m.S.homeTeam.nombre} ${m.S.score[0]} — ${m.S.score[1]} ${m.S.awayTeam.nombre} · ${r}` });
 }
 
 // Se ejecuta cuando la fase 'full' cumple su tiempo, medido en ticks.
@@ -1585,7 +1578,7 @@ function animate(){
     // --- presentación: a la tasa del monitor, no del simulador ---
     // los eventos del tick se vuelven imagen y sonido; de paso la vista se
     // entera de quién ha pegado para animar el golpeo
-    presentar(anotarEventos(drenarEventos()));
+    presentar(anotarEventos(drenarEventos(m)));
 
     // --- REPETICIÓN: sólo vista. Graba instantáneas y las dibuja aparte ---
     const enJuego = m.S.phase==='play' || m.S.phase==='kickoff' || m.S.phase==='falta';
@@ -1600,6 +1593,7 @@ function animate(){
     }
 
     tickGestos(frameDt);               // el reloj del festejo corre una sola vez
+    sincronizarAnillos(m.teams, m.S.humans);   // derivado de ownerSeat, no avisado
     for(let ti=0;ti<2;ti++)for(const p of m.teams[ti]){
       syncPlayerView(p, frameDt,
         posesRepeticion ? posesRepeticion.poses.get(p.playerId) : null,
@@ -1786,7 +1780,7 @@ function startMatch(){
   m.teams.forEach(arr=>arr.forEach(p=>G.scene.remove(p.mesh))); m.teams[0]=[]; m.teams[1]=[];
   spawnTeams();
   m.S.score=[0,0]; m.S.clock=0; m.S.half=1; m.lastScorer=null;
-  m.cards[0]={a:0,r:0}; m.cards[1]={a:0,r:0}; m.S.setPiece=null; limpiarEventos();
+  m.cards[0]={a:0,r:0}; m.cards[1]={a:0,r:0}; m.S.setPiece=null; limpiarEventos(m);
   reiniciarGestos();           // sin golpeos ni festejos heredados del partido anterior
   replayView.detener();     // el buffer de repetición no debe cruzar partidos
   if(!m.S.humans.length) crearHumanos(m.S.numHumanos);

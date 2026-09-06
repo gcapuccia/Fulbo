@@ -174,27 +174,28 @@ describe('asientos', () => {
 
 // Fase 4e: el núcleo no pinta ni suena — deja constancia y otro lo recoge.
 describe('buzón de eventos', () => {
-  beforeEach(() => limpiarEventos());
+  let bz;                                   // un buzón por partido, no de módulo
+  beforeEach(() => { bz = crearPartido(); limpiarEventos(bz); });
 
   it('drenar devuelve lo emitido y deja el buzón vacío', () => {
-    emitir('GOL', { team: 0, scorerIdx: 8 });
-    emitir('PATADA');
-    const primera = drenarEventos();
+    emitir(bz, 'GOL', { team: 0, scorerIdx: 8 });
+    emitir(bz, 'PATADA');
+    const primera = drenarEventos(bz);
     expect(primera).toHaveLength(2);
     expect(primera[0]).toEqual({ tipo: 'GOL', team: 0, scorerIdx: 8 });
-    expect(drenarEventos()).toHaveLength(0);      // ya se vació
+    expect(drenarEventos(bz)).toHaveLength(0);      // ya se vació
   });
 
   it('los eventos son SERIALIZABLES: pueden viajar a una sala', () => {
-    emitir('SAQUE', { etiqueta: 'CÓRNER', team: 1 });
-    emitir('TARJETA', { card: 'amarilla' });
-    const paquete = drenarEventos();
+    emitir(bz, 'SAQUE', { etiqueta: 'CÓRNER', team: 1 });
+    emitir(bz, 'TARJETA', { card: 'amarilla' });
+    const paquete = drenarEventos(bz);
     expect(() => JSON.stringify(paquete)).not.toThrow();
     expect(JSON.parse(JSON.stringify(paquete))).toEqual(paquete);
   });
 
   it('un tick sin novedades no genera basura', () => {
-    expect(drenarEventos()).toEqual([]);
+    expect(drenarEventos(bz)).toEqual([]);
   });
 });
 
@@ -287,6 +288,17 @@ describe('partidos independientes', () => {
     const b = crearPartido({ semilla: 5 });
     a.rng(); a.rng(); a.rng();          // la sala A juega tres tiradas
     expect(b.rng()).toBe(crearPartido({ semilla: 5 }).rng());   // B sigue intacta
+  });
+
+  it('el buzón de eventos no se filtra entre salas', () => {
+    const salaA = crearPartido({ semilla: 1 });
+    const salaB = crearPartido({ semilla: 1 });
+    emitir(salaA, 'GOL', { team: 0 });
+    emitir(salaA, 'PATADA', { playerId: 7 });
+    emitir(salaB, 'TARJETA', { card: 'roja' });
+    expect(drenarEventos(salaA).map(e => e.tipo)).toEqual(['GOL', 'PATADA']);
+    expect(drenarEventos(salaB).map(e => e.tipo)).toEqual(['TARJETA']);
+    expect(drenarEventos(salaA)).toEqual([]);   // vaciar una no vacía la otra dos veces
   });
 
   it('el partido entero es serializable salvo su generador', () => {

@@ -45,6 +45,10 @@ export function crearPartido({ semilla = 12345, local = TEAMS[0], visitante = TE
     offsidePend: null,
     passReceiver: null,
 
+    // --- buzón de eventos PROPIO: lo que pasó en ESTE partido y nadie más.
+    //     Cuando era un array de módulo, dos salas compartían buzón. ---
+    eventos: [],
+
     // --- bucle ---
     simTick: 0,
     acumulador: 0,
