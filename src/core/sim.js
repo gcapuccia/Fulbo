@@ -25,6 +25,7 @@ import { Vec3, Vec2 }                           from './math.js';
 import { suavizado }                            from './rng.js';
 import { emitir }                               from './events.js';
 import { crearJugador }                         from './player.js';
+import { estadoEntrada, consumirComando }       from './input.js';
 import { tickTimers }                           from './systems/movement.js';
 import { playerId, jugadorDeAsiento, esHumano,
          asignarControl as asignarControlSeat }  from './systems/seats.js';
@@ -755,7 +756,9 @@ function updateHumans(dt){
 }
 function updateHuman(dt, h){
   const p=jugadorDeAsiento(m.teams, h); if(!p || p.expelled) return;
-  const input = h.input;
+  // Los flancos ya vienen derivados por stepSim, una sola vez por tick.
+  const input = h.mando;
+  if(!input) return;
 
   // EN EL SUELO NO SE MANEJA. Sin esto, seguir apretando una dirección mientras
   // el jugador estaba derribado lo hacía "correr acostado" por el campo.
@@ -775,13 +778,13 @@ function updateHuman(dt, h){
     p.sprinting = false;
     return;
   }
-  // Mapeo relativo a la CÁMARA LATERAL: la cámara está en -X mirando hacia +X,
-  // así que "arriba" en pantalla = +X (alejarse) y "derecha" = +Z (arco rival del local).
-  const mv=_v.set(-input.move.y, 0, input.move.x);
+  // La dirección llega ya en coordenadas del mundo: el giro de cámara lo hace
+  // el cliente (input/cameraSpace.js). El servidor no sabe dónde mirás.
+  const mv=_v.set(input.mx, 0, input.mz);
 
   // --- Sprint con energía (stamina) ---
   const moving = mv.lengthSq()>0.01;
-  const wantSprint = input.sprint && p.stamina>0.06 && moving;
+  const wantSprint = input.mantieneSprint && p.stamina>0.06 && moving;
   if(wantSprint) p.stamina = Math.max(0, p.stamina - dt*0.085);  // ~12 s de sprint continuo
   else           p.stamina = Math.min(1, p.stamina + dt*(moving?0.05:0.12));
   // cansado = menos punta de velocidad
@@ -808,16 +811,16 @@ function updateHuman(dt, h){
   const cerca = distXZ(p.pos, m.bola.pos) < CAPTURA*1.25 && m.bola.pos.y < 1.5;
   const hasBall = m.S._owner===p || (cerca && (!m.S._owner || m.S._owner===p));
 
-  if(input.switch && !hasBall){ // cambiar de jugador
+  if(input.pulsaCambiar && !hasBall){ // cambiar de jugador
     asignarControl(h, masCercanoLibre(h.team, h));
   }
-  if(input.pass){
+  if(input.pulsaPase){
     if(hasBall) doPass(p);
     else if(canHead(p)) header(p, false);          // cabezazo de despeje/pase
     else if(cerca) h.buffer = { accion:'pase', t:0.30 };   // aún no es mío: lo dejo pedido
     else asignarControl(h, masCercanoLibre(h.team, h));
   }
-  if(input.shoot){
+  if(input.pulsaTiro){
     if(hasBall) doShoot(p, 0.8);
     else if(canHead(p)) header(p, true);           // cabezazo a puerta
     else if(cerca) h.buffer = { accion:'tiro', t:0.30 };
@@ -937,6 +940,10 @@ function endMatch(){
   emitir(m, 'FINAL', { texto: `${m.S.homeTeam.nombre} ${m.S.score[0]} — ${m.S.score[1]} ${m.S.awayTeam.nombre} · ${r}` });
 }
 function stepSim(dt){
+  // UN comando por asiento y por tick, SIEMPRE, corra la fase que corra. Si
+  // sólo se consumieran durante el juego, la cola de un asiento crecería
+  // mientras se cobra una falta y después se vaciaría de golpe.
+  for(const h of m.S.humans) h.mando = consumirComando(h);
   updatePhase(dt);
   if(m.S.phase==='play'||m.S.phase==='kickoff'){
     updateHumans(dt);
@@ -953,7 +960,7 @@ function stepSim(dt){
     // cualquier humano del equipo que saca puede ejecutar antes con pase/tiro
     if(m.S.setPiece){
       const h=m.S.humans.find(x=>x.team===m.S.setPiece.team);
-      if(h && (h.input.pass||h.input.shoot)) takeSetPiece();
+      if(h && h.mando && (h.mando.pulsaPase || h.mando.pulsaTiro)) takeSetPiece();
     }
   }
   // temporizadores y orientación: estado autoritativo, en todas las fases
@@ -976,8 +983,9 @@ function crearHumanos(n){
       slot: slotsPorDefecto[i],
       color: COLORES_HUMANO[i],
       controlled:null,
-      input:{ move:new Vec2(), pass:false, shoot:false, sprint:false,
-              switch:false, shootHold:false, _p:false, _s:false, _w:false }
+      // Sólo números y una cola de comandos: un asiento tiene que poder
+      // viajar por la red y volver idéntico.
+      entrada: estadoEntrada(), mando: null
     });
   }
   m.S.humans.forEach((h,i)=>{ h.idx=i; h.seatId=i; h.color=COLORES_HUMANO[i]; h.nombre='Jugador '+(i+1); });

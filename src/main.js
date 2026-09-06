@@ -37,6 +37,8 @@ import { fijarActivo }                        from './core/activo.js';
 // LA SIMULACIÓN VIVE EN core/sim.js. Este archivo es el CLIENTE: dibuja,
 // suena, escucha el teclado y arma los menús. `m` es un binding vivo: cuando
 // `usarPartido()` cambie de partido, aquí se ve el nuevo sin hacer nada.
+import { BTN, crearComando, encolarComando } from './core/input.js';
+import { aMundo }                             from './input/cameraSpace.js';
 import { m, usarPartido, partidoActual,
          hashEstado, spawnTeams, placeKickoff, asignarControl, cycleFormation,
          goalDirZ, teamName, startSetPiece, sendOff, showCard, callOffside,
@@ -236,16 +238,24 @@ function leerDispositivo(dev){
   return {mx,my,pass,shoot,sprint,sw};
 }
 
-// actualiza el input de cada humano, con detección de flanco por jugador
+// Convierte lo que hay apretado AHORA en un ComandoInput por asiento y lo
+// mete en su cola. Esto es exactamente lo que hará el cliente online: la
+// única diferencia será que el comando, en vez de ir a la cola de al lado,
+// viajará por un socket hasta la cola del servidor.
+//
+// Los flancos NO se calculan aquí: se mandan niveles y los deriva la
+// simulación. Y el giro de cámara se aplica aquí, porque es cosa del cliente.
+let _seqInput = 0;
 function pollInput(){
   for(const h of m.S.humans){
     const r = leerDispositivo(h.device);
-    const i = h.input;
-    i.move.set(r.mx, r.my);
-    i.pass   = r.pass  && !i._p; i._p = r.pass;
-    i.shoot  = r.shoot && !i._s; i._s = r.shoot;
-    i.switch = r.sw    && !i._w; i._w = r.sw;
-    i.shootHold = r.shoot; i.sprint = r.sprint;
+    const dir = aMundo(r.mx, r.my);
+    let botones = 0;
+    if(r.pass)   botones |= BTN.PASE;
+    if(r.shoot)  botones |= BTN.TIRO;
+    if(r.sprint) botones |= BTN.SPRINT;
+    if(r.sw)     botones |= BTN.CAMBIAR;
+    encolarComando(h, crearComando(_seqInput++, m.simTick, dir.x, dir.z, botones));
   }
 }
 
@@ -550,10 +560,13 @@ function animate(){
   requestAnimationFrame(animate);
   const frameDt=Math.min(G.clock.getDelta(), 0.25);
   if(m.S.running && !m.S.paused){
-    pollInput();                       // los dispositivos se muestrean una vez por frame
     m.acumulador += frameDt;
     let pasos=0;
-    while(m.acumulador >= DT && pasos < MAX_PASOS){ stepSim(DT); m.acumulador -= DT; pasos++; }
+    // Se muestrea UNA VEZ POR TICK, no por frame: así el juego se comporta
+    // igual a 30 que a 240 Hz, y es lo mismo que hará el cliente online.
+    while(m.acumulador >= DT && pasos < MAX_PASOS){
+      pollInput(); stepSim(DT); m.acumulador -= DT; pasos++;
+    }
     if(pasos === MAX_PASOS) m.acumulador = 0;   // se descarta el atraso en vez de acumularlo
     // --- presentación: a la tasa del monitor, no del simulador ---
     // los eventos del tick se vuelven imagen y sonido; de paso la vista se

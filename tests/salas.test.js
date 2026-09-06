@@ -12,6 +12,7 @@ import { crearPartido, reiniciarEstad } from '../src/core/match.js';
 import { usarPartido, spawnTeams, placeKickoff, stepSim, hashEstado } from '../src/core/sim.js';
 import { emitir, drenarEventos } from '../src/core/events.js';
 import { DT } from '../src/config/rules.js';
+import { BTN, crearComando, encolarComando, consumirComando, estadoEntrada } from '../src/core/input.js';
 
 function arrancar(semilla){
   const p = usarPartido(crearPartido({ semilla }));
@@ -75,5 +76,45 @@ describe('salas simultáneas', () => {
 
   it('un partido de 90 s da el hash del golden master', () => {
     expect(correrSola(12345, 5400).hash).toBe('f25882e0');
+  });
+});
+
+// --- EL INPUT COMO FRONTERA DE RED ---
+describe('comandos de entrada', () => {
+  it('una pulsación es UN flanco, aunque el frame meta varios ticks', () => {
+    const h = { entrada: estadoEntrada() };
+    // el cliente manda "pase apretado" una sola vez y después lo suelta
+    encolarComando(h, crearComando(0, 0, 0, 0, BTN.PASE));
+    encolarComando(h, crearComando(1, 1, 0, 0, BTN.PASE));   // sigue apretado
+    encolarComando(h, crearComando(2, 2, 0, 0, 0));          // soltado
+    const flancos = [];
+    for(let i = 0; i < 5; i++) flancos.push(consumirComando(h).pulsaPase);
+    expect(flancos.filter(Boolean).length).toBe(1);          // exactamente un pase
+    expect(flancos[0]).toBe(true);
+  });
+
+  it('sin comando nuevo se mantiene el nivel pero no hay flanco', () => {
+    const h = { entrada: estadoEntrada() };
+    encolarComando(h, crearComando(0, 0, 1, 0, BTN.SPRINT));
+    const a = consumirComando(h);
+    const b = consumirComando(h);                            // cola vacía
+    expect(a.mantieneSprint).toBe(true);
+    expect(b.mantieneSprint).toBe(true);                     // seguís esprintando
+    expect(b.mx).toBe(1);                                    // y en la misma dirección
+  });
+
+  it('el comando es serializable: sólo números', () => {
+    const cmd = crearComando(7, 120, -0.5, 0.5, BTN.TIRO | BTN.SPRINT);
+    expect(JSON.parse(JSON.stringify(cmd))).toEqual(cmd);
+    expect(Object.values(cmd).every(v => typeof v === 'number')).toBe(true);
+  });
+
+  it('el servidor sabe qué seq procesó de cada asiento', () => {
+    const h = { entrada: estadoEntrada() };
+    expect(h.entrada.ultimoSeq).toBe(-1);
+    encolarComando(h, crearComando(41, 0, 0, 0, 0));
+    encolarComando(h, crearComando(42, 1, 0, 0, 0));
+    consumirComando(h); expect(h.entrada.ultimoSeq).toBe(41);
+    consumirComando(h); expect(h.entrada.ultimoSeq).toBe(42);
   });
 });
