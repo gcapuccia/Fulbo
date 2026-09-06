@@ -1,0 +1,14 @@
+{
+  "name": "fulbo-servidor",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Servidor de salas de FÚLBO: simula los partidos y difunde el estado.",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
