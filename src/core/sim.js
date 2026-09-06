@@ -33,6 +33,16 @@ import { crearPartido }                         from './match.js';
 import { fijarActivo }                          from './activo.js';
 
 // El partido sobre el que trabajan todas las funciones de este archivo.
+//
+// ⚠️ TRAMPA AL DEPURAR. Esta línea corre al IMPORTAR el módulo, y registra su
+// partido como "el activo". Si desde la consola del navegador hacés
+// `await import('/src/core/sim.js')`, el servidor de desarrollo puede
+// entregarte una SEGUNDA instancia del módulo: esa instancia crea otro partido
+// y le roba el puesto de activo al que estás jugando. A partir de ahí league.js
+// escribe en un partido fantasma y el torneo parece roto sin estarlo.
+//
+// Para inspeccionar el partido en marcha usá `__dbg`, que está atado a la
+// instancia de verdad. En producción esto no puede pasar: hay un solo módulo.
 export let m = fijarActivo(crearPartido());
 export function usarPartido(partido){ m = fijarActivo(partido); return m; }
 export function partidoActual(){ return m; }
