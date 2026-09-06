@@ -150,7 +150,9 @@
         <input id="onCodigo" type="text" maxlength="5" placeholder="CÓDIGO" autocomplete="off"
                style="text-transform:uppercase;text-align:center;letter-spacing:4px;max-width:130px">
         <button id="onUnir">Entrar</button>
+        <button id="onRefrescar" title="Actualizar la lista">↻ salas abiertas</button>
       </div>
+      <div id="onPublicas"></div>
     </div>
     <p class="ohint" id="onEstado" style="margin:12px 0 0">Sin conectar.</p>
 
@@ -169,6 +171,8 @@
           <select id="onPuesto"></select>
         </label>
         <button id="onTomar">Tomar puesto</button>
+        <button id="onListo">Estoy listo</button>
+        <button id="onDejar">Dejar la sala</button>
       </div>
     </div>
 
@@ -178,6 +182,13 @@
     </div>
   </div>
 </div>
+
+<!-- Aviso de reconexión, encima del partido -->
+<div id="netcaida" class="hidden"><div class="nb">
+  <b>Se cortó la conexión</b>
+  <span id="netcaidaTxt">Reintentando…</span>
+  <small>Tu jugador lo lleva la IA mientras tanto. El partido no se detiene.</small>
+</div></div>
 
 <!-- Pausa -->
 <div id="pause">

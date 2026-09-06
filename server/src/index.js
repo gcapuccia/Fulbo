@@ -20,6 +20,12 @@ import { DT } from '../../src/config/rules.js';
 const PUERTO = Number(process.env.PORT || 2567);
 const HZ_ESTADO = 20;                       // snapshots por segundo
 const CADA = Math.round(60 / HZ_ESTADO);    // uno cada 3 ticks
+// Margen para volver tras una caída sin perder el puesto. Mientras tanto la IA
+// juega por vos, así que nadie se queda esperando a un jugador congelado.
+const MARGEN_RECONEXION = 60_000;
+// Una sala vacía no se borra en el acto: si a todos se les cayó internet a la
+// vez, tienen este rato para volver y seguir el mismo partido.
+const MARGEN_SALA_VACIA = 90_000;
 
 const auth = crearAutenticador();
 const salas = new Map();                    // codigo -> Sala
@@ -42,12 +48,26 @@ const enviar = (ws, t, datos = {}) => {
 const difundir = (sala, t, datos) => {
   for(const [, c] of sala.clientes) enviar(c.ws, t, datos);
 };
+// La sala se describe desde los ASIENTOS (que son de la cuenta), no desde las
+// conexiones: así alguien desconectado sigue apareciendo, marcado como
+// ausente, y no parece que se haya ido para siempre.
 const estadoSala = sala => ({
-  codigo: sala.codigo, fase: sala.fase,
-  jugadores: [...sala.clientes.entries()].map(([id, c]) => ({
-    clienteId: id, nombre: c.nombre, equipo: c.equipo ?? null,
-    puesto: c.puesto ?? null, seatId: c.seatId,
+  codigo: sala.codigo, fase: sala.fase, anfitrion: sala.anfitrion,
+  jugadores: [...sala.asientos.entries()].map(([uid, a]) => ({
+    userId: uid, nombre: a.nombre, equipo: a.equipo, puesto: a.puesto,
+    seatId: a.seatId, listo: a.listo,
+    conectado: sala.presente(uid), esAnfitrion: uid === sala.anfitrion,
   })),
+});
+
+const listaSalas = () => ({
+  // Las salas sin nadie conectado no se ofrecen: siguen vivas por el margen de
+  // reconexión, pero enseñarlas sería invitar a entrar a un sitio desierto.
+  salas: [...salas.values()]
+    .filter(s => s.publica && s.fase !== 'terminada' && s.conectados > 0)
+    .map(s => ({ codigo: s.codigo, gente: s.asientos.size, conectados: s.conectados,
+                 fase: s.fase,
+                 anfitrion: s.asientos.get(s.anfitrion)?.nombre || 'sin anfitrión' })),
 });
 
 wss.on('connection', ws => {
@@ -86,6 +106,19 @@ wss.on('connection', ws => {
         break;
       }
 
+      case C.SALAS:
+        enviar(ws, S.LISTA, listaSalas());
+        break;
+
+      case C.DEJAR: {
+        if(!sala) return;
+        sala.sale(clienteId, Date.now());
+        info.codigo = null;
+        difundir(sala, S.SALA, estadoSala(sala));
+        enviar(ws, S.LISTA, listaSalas());
+        break;
+      }
+
       case C.UNIR: {
         // AQUÍ es donde la cuenta se vuelve obligatoria, y en ningún sitio antes.
         if(!info.cuenta) return enviar(ws, S.ERROR, { motivo:'para jugar online hace falta una cuenta' });
@@ -98,15 +131,18 @@ wss.on('connection', ws => {
           salas.set(cod, s);
           console.log(`[sala ${cod}] creada`);
         }
-        if(s.llena) return enviar(ws, S.ERROR, { motivo:'la sala está llena' });
-        // Una cuenta, un asiento por sala: en el sofá cuatro personas comparten
-        // una cuenta, pero online cada asiento es una cuenta distinta.
-        for(const [, o] of s.clientes)
-          if(o.userId === info.cuenta.userId)
-            return enviar(ws, S.ERROR, { motivo:'esa cuenta ya está en la sala' });
-        s.entra(clienteId, ws, info.cuenta.nombre, info.cuenta.userId);
+        // Si esa cuenta YA tiene asiento en la sala, esto es una reconexión y
+        // se le devuelve el puesto. Si no lo tiene, es alguien nuevo y hay que
+        // mirar si queda sitio.
+        const vuelve = s.asientos.has(info.cuenta.userId);
+        if(!vuelve && s.llena) return enviar(ws, S.ERROR, { motivo:'la sala está llena' });
+        if(vuelve && s.presente(info.cuenta.userId))
+          return enviar(ws, S.ERROR, { motivo:'esa cuenta ya está abierta en la sala' });
+        const como = s.entra(clienteId, ws, info.cuenta.nombre, info.cuenta.userId, Date.now());
         info.codigo = s.codigo;
-        enviar(ws, S.BIENVENIDA, { codigo:s.codigo, clienteId, semilla:s.semilla });
+        enviar(ws, S.BIENVENIDA, { codigo:s.codigo, clienteId, semilla:s.semilla,
+                                   reconexion: como === 'reconexion', fase: s.fase });
+        if(como === 'reconexion') console.log(`[sala ${s.codigo}] vuelve ${info.cuenta.nombre}`);
         difundir(s, S.SALA, estadoSala(s));
         break;
       }
@@ -117,15 +153,38 @@ wss.on('connection', ws => {
         difundir(sala, S.SALA, estadoSala(sala));
         break;
       }
-      case C.LISTO: {
+      case C.PREPARADO: {
+        if(!sala) return;
+        if(!sala.marcarListo(clienteId, msg.listo))
+          return enviar(ws, S.ERROR, { motivo:'primero elegí un puesto' });
+        difundir(sala, S.SALA, estadoSala(sala));
+        break;
+      }
+
+      case C.ECHAR: {
+        if(!sala) return;
+        const r = sala.echar(clienteId, msg.userId);
+        if(!r.ok) return enviar(ws, S.ERROR, { motivo:r.motivo });
+        if(r.echado){
+          const c = sala.clientes.get(r.echado);
+          if(c){ enviar(c.ws, S.EXPULSADO, { motivo:'el anfitrión te sacó de la sala' });
+                 sala.clientes.delete(r.echado);
+                 const i = deCliente.get(c.ws); if(i) i.codigo = null; }
+        }
+        difundir(sala, S.SALA, estadoSala(sala));
+        break;
+      }
+
+      case C.EMPEZAR: {
         if(!sala || sala.fase !== 'lobby') return;
-        if(!sala.arrancar()) return enviar(ws, S.ERROR, { motivo:'nadie eligió puesto' });
-        console.log(`[sala ${sala.codigo}] arranca con ${sala.clientes.size} jugador(es)`);
-        for(const [, c] of sala.clientes) if(c.userId) auth.contarPartido(c.userId);
+        const r = sala.arrancar(clienteId);
+        if(!r.ok) return enviar(ws, S.ERROR, { motivo:r.motivo });
+        console.log(`[sala ${sala.codigo}] arranca con ${sala.asientos.size} jugador(es)`);
+        for(const [uid] of sala.asientos) auth.contarPartido(uid);
         difundir(sala, S.ARRANQUE, {
           semilla: sala.semilla,
-          asientos: [...sala.clientes.entries()].map(([id, c]) => ({ clienteId:id, seatId:c.seatId,
-                      nombre:c.nombre, equipo:c.equipo, puesto:c.puesto })),
+          asientos: [...sala.asientos.entries()].map(([uid, a]) => ({ userId:uid, seatId:a.seatId,
+                      nombre:a.nombre, equipo:a.equipo, puesto:a.puesto })),
         });
         break;
       }
@@ -144,10 +203,12 @@ wss.on('connection', ws => {
     if(!info || !info.codigo) return;
     const sala = salas.get(info.codigo);
     if(!sala) return;
-    sala.sale(info.clienteId);
-    console.log(`[sala ${sala.codigo}] se fue alguien; quedan ${sala.clientes.size}`);
-    if(sala.vacia){ salas.delete(sala.codigo); console.log(`[sala ${sala.codigo}] cerrada`); }
-    else difundir(sala, S.SALA, estadoSala(sala));
+    // La sala NO se borra aunque quede vacía: se le da un margen por si a
+    // todos se les cayó la conexión a la vez. El barrendero de más abajo la
+    // cierra si nadie vuelve.
+    sala.sale(info.clienteId, Date.now());
+    console.log(`[sala ${sala.codigo}] se desconecta alguien; conectados ${sala.conectados}`);
+    difundir(sala, S.SALA, estadoSala(sala));
   });
 });
 
@@ -160,6 +221,18 @@ setInterval(() => {
   anterior = ahora;
   contador++;
   const difundeEstado = (contador % CADA) === 0;
+
+  // barrendero: una vez por segundo, caducar asientos y cerrar salas muertas
+  if(contador % 60 === 0){
+    const ahora = Date.now();
+    for(const sala of [...salas.values()]){
+      if(sala.caducar(ahora, MARGEN_RECONEXION)) difundir(sala, S.SALA, estadoSala(sala));
+      if(sala.vacia && sala.vaciaDesde && ahora - sala.vaciaDesde > MARGEN_SALA_VACIA){
+        salas.delete(sala.codigo);
+        console.log(`[sala ${sala.codigo}] cerrada por abandono`);
+      }
+    }
+  }
 
   for(const sala of salas.values()){
     const pasos = sala.avanzar(dtReal);

@@ -137,6 +137,12 @@ function nearestToBall(ti){
 }
 // asigna a un humano el control de un jugador (liberando el anterior)
 function asignarControl(h, p){
+  // UN ASIENTO AUSENTE NO RECIBE JUGADOR. Si a alguien se le cae la conexión,
+  // su asiento sigue existiendo (para que pueda volver a él), pero nadie está
+  // mandando entradas: darle un jugador lo dejaría plantado en el césped en
+  // vez de que lo juegue la IA. Sin esta guarda, el cambio automático de
+  // jugador al recuperar el balón se lo asignaba igual.
+  if(!h || h.ausente) return;
   asignarControlSeat(m.teams, h, p);
 }
 // jugador del equipo más cercano al balón que no lleve ya otro humano

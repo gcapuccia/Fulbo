@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "probar": "node src/auth/probar.mjs && node src/probar-cuentas.mjs"
+    "probar": "node src/auth/probar.mjs && node src/probar-cuentas.mjs && node src/probar-lobby.mjs && node src/probar-sala.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"

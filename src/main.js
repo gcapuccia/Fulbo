@@ -836,12 +836,48 @@ function pintarSala(){
   $on('onCodSala').textContent = online.codigo || '····';
   $on('onPing').textContent = online.ping ? `${online.ping} ms` : '';
   const etiquetas = etiquetasSlots(m.S.formation[0]);
+  const jefe = online.soyAnfitrion;
   $on('onLista').innerHTML = online.jugadores.map(j => {
-    const yo = j.clienteId === online.clienteId;
+    const yo = j.userId === online.cuenta?.userId;
     const donde = j.equipo == null ? '<span class="puesto">sin puesto</span>'
       : `<span class="puesto">${j.equipo===0?'Local':'Visitante'} · ${etiquetas[j.puesto]||j.puesto}</span>`;
-    return `<div class="salarow${yo?' yo':''}"><b>${j.nombre}${yo?' (vos)':''}</b>${donde}</div>`;
+    const marcas = [
+      j.esAnfitrion ? '<span class="marca jefe">anfitrión</span>' : '',
+      j.listo       ? '<span class="marca listo">listo</span>' : '',
+      j.conectado   ? '' : '<span class="marca fuera">desconectado</span>',
+      (jefe && !yo) ? `<button class="echar" data-echar="${j.userId}">echar</button>` : '',
+    ].join('');
+    return `<div class="salarow${yo?' yo':''}"><b>${j.nombre}${yo?' (vos)':''}</b>${donde}` +
+           `<span class="marcas">${marcas}</span></div>`;
   }).join('') || '<div class="salarow"><b>Nadie más todavía</b></div>';
+
+  for(const b of $on('onLista').querySelectorAll('[data-echar]'))
+    b.onclick = () => online.echar(b.dataset.echar);
+
+  // el botón de empezar es sólo del anfitrión
+  const emp = $on('onEmpezar');
+  emp.disabled = !jefe;
+  emp.textContent = jefe ? '▶ Empezar partido' : 'Espera al anfitrión';
+  const yoSoy = online.jugadores.find(j => j.userId === online.cuenta?.userId);
+  const listo = !!yoSoy?.listo;
+  $on('onListo').classList.toggle('si', listo);
+  $on('onListo').textContent = listo ? '✓ Listo' : 'Estoy listo';
+}
+
+// Lista de salas abiertas: para entrar sin que nadie te pase un código.
+function pintarPublicas(){
+  if(!online) return;
+  const c = $on('onPublicas');
+  const salas = online.salasPublicas || [];
+  if(!salas.length){ c.innerHTML = '<div class="salapub"><span style="opacity:.6">' +
+      'No hay salas abiertas. Creá una.</span></div>'; return; }
+  c.innerHTML = salas.map(x =>
+    `<div class="salapub" data-sala="${x.codigo}"><b>${x.codigo}</b>` +
+    `<span style="opacity:.75">${x.anfitrion}</span>` +
+    `<span class="gente${x.fase==='jugando'?' jugando':''}">` +
+    `${x.conectados}/4 · ${x.fase==='jugando'?'jugando':'esperando'}</span></div>`).join('');
+  for(const el of c.querySelectorAll('[data-sala]'))
+    el.onclick = () => online.unirseA(el.dataset.sala);
 }
 
 async function conectarOnline(){
@@ -855,14 +891,23 @@ async function conectarOnline(){
     // quedaría mostrando el formulario de entrada con la sesión ya iniciada.
     await online.conectar();
     online.bus.al('sesion', msg => { estadoOnline(`Sesión iniciada como ${msg.nombre}.`);
-                                     setApodo(msg.nombre); pintarCuenta(); })
+                                     setApodo(msg.nombre); pintarCuenta();
+                                     online.pedirSalas(); })
               .al('sala', () => pintarSala())
               .al('bienvenida', () => { estadoOnline('En la sala.'); pintarSala(); })
               .al('error', msg => estadoOnline('⚠ ' + msg.motivo))
+              .al('lista', () => pintarPublicas())
+              .al('expulsado', msg => { estadoOnline('⚠ ' + msg.motivo); pintarSala();
+                                        volverAlMenuDesdeRed(); })
               .al('arranque', msg => arrancarPartidoOnline(msg))
-              .al('_cerrado', () => { estadoOnline('Se cortó la conexión.'); });
+              .al('_cerrado', () => avisarCaida());
     estadoOnline('Conectado. Entrá con tu cuenta o creá una.');
-    setInterval(() => { if(online?.cuenta){ online.medirPing(); pintarSala(); } }, 2000);
+    setInterval(() => {
+      if(!online?.cuenta) return;
+      online.medirPing();
+      pintarSala();
+      if(!online.codigo && !m.S.running) online.pedirSalas();   // el lobby se refresca solo
+    }, 2000);
     return true;
   } catch(e){
     online = null;
@@ -881,6 +926,31 @@ async function accionCuenta(crear){
   estadoOnline(crear ? 'Creando cuenta…' : 'Entrando…');
   if(crear) online.registrar(nombre, clave); else online.identificarse(nombre, clave);
   $on('cuClave').value = '';
+}
+
+// Se cayó el socket. Ni se pausa el partido ni se echa a nadie al menú: el
+// servidor guarda el asiento un minuto y la IA juega ese jugador mientras
+// tanto. Aquí sólo se avisa y se reintenta.
+function avisarCaida(){
+  if(!online) return;
+  const banner = $on('netcaida');
+  const enPartido = m.S.running;
+  if(enPartido) banner.classList.remove('hidden');
+  online.intentarVolver(txt => {
+    $on('netcaidaTxt').textContent = txt;
+    estadoOnline(txt);
+    if(/Reconectado/.test(txt)) banner.classList.add('hidden');
+    if(/No se pudo/.test(txt)){ banner.classList.add('hidden'); volverAlMenuDesdeRed(); }
+  });
+}
+
+function volverAlMenuDesdeRed(){
+  m.S.running = false; posesOnline = null;
+  $on('hud').style.display = 'none';
+  $on('netcaida').classList.add('hidden');
+  $on('menu').classList.add('hidden');
+  $on('online').classList.remove('hidden');
+  pintarCuenta();
 }
 
 // El cliente crea los mismos 22 jugadores con sus mallas, pero NO los simula:
@@ -952,6 +1022,11 @@ $on('cuSalir').onclick    = () => { if(online){ online.cerrarSesion(); pintarCue
                                     estadoOnline('Sesión cerrada.'); } };
 $on('onCrear').onclick    = () => { if(online?.cuenta) online.crearSala(); };
 $on('onUnir').onclick     = () => { if(online?.cuenta) online.unirseA(($on('onCodigo').value||'').trim().toUpperCase()); };
+$on('onRefrescar').onclick= () => { if(online?.cuenta) online.pedirSalas(); };
+$on('onListo').onclick    = () => { if(!online) return;
+                                    const yo = online.jugadores.find(j => j.userId === online.cuenta?.userId);
+                                    online.preparado(!yo?.listo); };
+$on('onDejar').onclick    = () => { if(online){ online.dejarSala(); pintarSala(); online.pedirSalas(); } };
 $on('onTomar').onclick    = () => { if(online) online.pedirAsiento(+$on('onEquipo').value, +$on('onPuesto').value); };
 $on('onEmpezar').onclick  = () => { if(online) online.empezar(); else estadoOnline('Primero creá o entrá a una sala.'); };
 $on('onCopiar').onclick   = () => { if(online?.codigo) navigator.clipboard?.writeText(online.codigo); };

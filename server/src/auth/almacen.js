@@ -33,15 +33,20 @@ const MAX_FALLOS = 5;
 const CASTIGO_MS = 15 * 60 * 1000;
 
 export function crearAlmacen(ruta = 'datos/cuentas.json'){
-  let db = { usuarios: {}, version: 1 };
+  let db = { usuarios: {}, sesiones: {}, version: 1 };
   if(existsSync(ruta)){
-    try { db = JSON.parse(readFileSync(ruta, 'utf8')); }
+    try { db = { sesiones: {}, ...JSON.parse(readFileSync(ruta, 'utf8')) }; }
     catch { console.error('[cuentas] archivo ilegible; se empieza vacío'); }
   }
-  const sesiones = new Map();               // token -> { userId, expira }
+  // Las sesiones se GUARDAN. Cuando vivían sólo en memoria, cada reinicio del
+  // servidor echaba a todo el mundo y había que volver a escribir la
+  // contraseña — molesto en producción e insufrible en desarrollo.
+  const sesiones = new Map(Object.entries(db.sesiones || {}));
+  for(const [t, s] of sesiones) if(Date.now() > s.expira) sesiones.delete(t);
   const fallos   = new Map();               // clave normalizada -> { n, hasta }
 
   const guardar = () => {
+    db.sesiones = Object.fromEntries(sesiones);
     mkdirSync(dirname(ruta), { recursive: true });
     writeFileSync(ruta, JSON.stringify(db, null, 1));
   };
@@ -54,6 +59,7 @@ export function crearAlmacen(ruta = 'datos/cuentas.json'){
   function nuevaSesion(userId){
     const token = randomBytes(32).toString('base64url');
     sesiones.set(token, { userId, expira: Date.now() + SESION_MS });
+    guardar();
     return token;
   }
 
@@ -120,7 +126,7 @@ export function crearAlmacen(ruta = 'datos/cuentas.json'){
       return u ? { userId: u.id, nombre: u.nombre } : null;
     },
 
-    salir(token){ sesiones.delete(token); },
+    salir(token){ sesiones.delete(token); guardar(); },
 
     contarPartido(userId){
       const u = Object.values(db.usuarios).find(x => x.id === userId);

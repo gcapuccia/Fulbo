@@ -23,18 +23,24 @@ export const C = {
   ENTRAR:  'entrar',     // { nombre, clave }
   SESION:  'sesion',     // { token }                  reanudar sin reescribir la clave
   SALIR:   'salir',      // { }
-  UNIR:    'unir',       // { codigo? }                codigo vacío = crear sala
-  ASIENTO: 'asiento',    // { equipo, puesto }         reclamar un puesto
-  LISTO:   'listo',      // { }                        empezar el partido
-  CMD:     'cmd',        // { seq, tick, mx, mz, buttons }
-  PING:    'ping',       // { t0 }
+  UNIR:     'unir',      // { codigo? }                codigo vacío = crear sala
+  DEJAR:    'dejar',     // { }                        salir de la sala sin cerrar sesión
+  SALAS:    'salas',     // { }                        pedir la lista de salas públicas
+  ASIENTO:  'asiento',   // { equipo, puesto }         reclamar un puesto
+  PREPARADO:'preparado', // { listo }                  decir "estoy listo"
+  EMPEZAR:  'empezar',   // { }                        sólo el anfitrión
+  ECHAR:    'echar',     // { userId }                 sólo el anfitrión
+  CMD:      'cmd',       // { seq, tick, mx, mz, buttons }
+  PING:     'ping',      // { t0 }
 };
 
 // --- servidor -> cliente ---
 export const S = {
   SESION:     'sesion',     // { token, nombre, userId }
   BIENVENIDA: 'bienvenida', // { codigo, clienteId, semilla, local, visitante }
-  SALA:       'sala',       // { jugadores:[{clienteId,nombre,equipo,puesto,listo}], fase }
+  SALA:       'sala',       // { codigo, fase, anfitrion, jugadores:[...] }
+  LISTA:      'lista',      // { salas:[{codigo,gente,fase,anfitrion}] }
+  EXPULSADO:  'expulsado',  // { motivo }
   ARRANQUE:   'arranque',   // { semilla, formaciones, asientos:[...] }
   ESTADO:     'estado',     // { tick, b:[...], j:[...], marcador, reloj, fase, ack:{seatId:seq} }
   EVENTOS:    'eventos',    // { lista:[{tipo,...}] }

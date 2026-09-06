@@ -193,10 +193,16 @@ No se pide correo (menos datos tuyos que guardar), y el precio de eso es que
 a mano en el servidor. Los detalles, y cómo delegar todo esto en Supabase para
 abrirlo al público, están en [`server/README.md`](server/README.md).
 
-Ya dentro, *Crear sala* te da un código de cuatro letras (ej. `WBPC`). Quien
-quiera jugar entra con ese código, cada uno elige equipo y puesto, y uno pulsa
-*Empezar partido*. Los puestos que nadie tome los juega la IA de siempre, así
-que una sala es jugable con dos personas o con ocho — no hacen falta 22.
+Ya dentro tenés la **lista de salas abiertas** —se puede entrar sin que nadie
+te pase nada— o *Crear sala*, que te da un código de cuatro letras (ej.
+`WBPC`) para compartir. Cada uno elige equipo y puesto y pulsa **Estoy listo**;
+el **anfitrión** (quien creó la sala) empieza el partido cuando están todos.
+Los puestos que nadie tome los juega la IA de siempre, así que una sala es
+jugable con dos personas o con ocho — no hacen falta 22.
+
+**Si se te cae internet no pasa nada**: tu jugador lo toma la IA en el acto,
+el partido sigue para los demás, y tenés un minuto para volver al mismo puesto.
+El juego reintenta solo y te lo dice en pantalla.
 
 Si alguien cierra la pestaña, su jugador **no se queda plantado**: se libera
 el asiento y la IA lo retoma en el mismo tick. El partido no se interrumpe.
@@ -213,6 +219,11 @@ Para apuntar a un servidor que no sea el de tu máquina:
   una con su asiento. Sin cuenta, el servidor rechaza entrar a cualquier sala.
 - La contraseña no aparece ni en el archivo de cuentas, ni en `localStorage`,
   ni en el log del servidor. Sólo se guardan sal y hash.
+- Reconexión, medida: cortada la conexión en el tick 1839, el cartel aparece,
+  y a los 4 s se vuelve a la misma sala y al mismo asiento con el partido ya
+  en el tick 2099. Nunca se detuvo.
+- `cd server && npm run probar` — 45 comprobaciones entre cuentas, salas,
+  anfitrión, listo, echar y reconexión.
 - Un gol marcado por una persona aparece en la otra pantalla con su cartel y
   su marcador.
 - `node scripts/sim90.mjs`: 90 s de partido en Node en **76 ms**, con el mismo

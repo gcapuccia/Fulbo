@@ -19,37 +19,121 @@ export class Sala {
     this.codigo = codigo;
     this.semilla = semilla;
     this.m = crearPartido({ semilla });
-    this.clientes = new Map();      // clienteId -> { ws, nombre, seatId, listo }
+    this.clientes = new Map();      // clienteId -> ficha de ESTA conexión
+    // Los ASIENTOS son de la CUENTA, no de la conexión. Por eso viven aparte:
+    // una conexión se cae y vuelve con otro clienteId, pero el mismo userId
+    // recupera su puesto. Esto es lo que hace posible la reconexión.
+    this.asientos = new Map();      // userId -> { nombre, equipo, puesto, seatId, listo, desde }
     this.fase = 'lobby';            // lobby | jugando | terminada
+    this.anfitrion = null;          // userId de quien manda en la sala
+    this.publica = true;
     this.acumulador = 0;
-    this.ultimoTick = 0;
     this.creadaEn = 0;              // lo pone el servidor, que sí puede mirar el reloj
+    this.vaciaDesde = 0;            // para el margen de gracia antes de cerrarla
   }
 
-  get llena(){ return this.clientes.size >= 4; }
+  get llena(){ return this.asientos.size >= 4; }
   get vacia(){ return this.clientes.size === 0; }
+  get conectados(){ return this.clientes.size; }
 
-  entra(clienteId, ws, nombre, userId){
-    // `userId` es la CUENTA; `clienteId` es esta conexión concreta. Son cosas
-    // distintas: la misma cuenta puede reconectar con otro clienteId.
-    this.clientes.set(clienteId, { ws, nombre, userId, seatId: null, listo: false, ultimoSeq: -1 });
+  /** Está esta cuenta conectada ahora mismo? */
+  presente(userId){
+    for(const [, c] of this.clientes) if(c.userId === userId) return true;
+    return false;
   }
 
-  sale(clienteId){
+  /** Quién manda: el primero que entró y siga conectado. */
+  revisarAnfitrion(){
+    if(this.anfitrion && this.presente(this.anfitrion)) return;
+    let mejor = null, desde = Infinity;
+    for(const [uid, a] of this.asientos)
+      if(this.presente(uid) && a.desde < desde){ desde = a.desde; mejor = uid; }
+    this.anfitrion = mejor;
+  }
+
+  /** Todos los que tienen puesto y están conectados dijeron que sí. */
+  get todosListos(){
+    let conPuesto = 0;
+    for(const [uid, a] of this.asientos){
+      if(a.equipo == null) continue;
+      conPuesto++;
+      if(!a.listo && this.presente(uid)) return false;
+    }
+    return conPuesto > 0;
+  }
+
+  /**
+   * Entra una cuenta. Si ya tenía asiento en esta sala lo RECUPERA: es una
+   * reconexión, no una entrada nueva. Devuelve 'nuevo' o 'reconexion'.
+   */
+  entra(clienteId, ws, nombre, userId, ahora){
+    this.clientes.set(clienteId, { ws, nombre, userId, ultimoSeq: -1 });
+    const previo = this.asientos.get(userId);
+    if(previo){
+      previo.nombre = nombre;
+      previo.ausenteDesde = 0;
+      if(previo.seatId != null) this.devolverAsiento(previo.seatId);
+      this.revisarAnfitrion();
+      return 'reconexion';
+    }
+    this.asientos.set(userId, { nombre, equipo:null, puesto:null, seatId:null,
+                                listo:false, desde: ahora, ausenteDesde: 0 });
+    this.revisarAnfitrion();
+    return 'nuevo';
+  }
+
+  /** El jugador vuelve a manos de su persona. */
+  devolverAsiento(seatId){
+    const h = this.m.S.humans.find(x => x.seatId === seatId);
+    if(!h) return;
+    h.ausente = false;
+    // Se limpia primero: si por lo que sea este asiento ya figuraba como dueño
+    // de alguien, asignarle otro dejaría DOS jugadores atados a una persona.
+    for(const arr of this.m.teams) for(const p of arr) if(p.ownerSeat === seatId) p.ownerSeat = null;
+    const arr = this.m.teams[h.team];
+    const suyo = (arr[h.slot] && arr[h.slot].ownerSeat == null && !arr[h.slot].isGK)
+               ? arr[h.slot]
+               : arr.find(p => !p.isGK && !p.expelled && p.ownerSeat == null);
+    if(suyo){ suyo.ownerSeat = seatId; h.playerId = suyo.playerId; }
+  }
+
+  /**
+   * Se cae una conexión. El ASIENTO NO se borra: se marca ausente y la IA
+   * retoma a ese jugador en el mismo tick. El partido no se interrumpe nunca
+   * porque alguien cierre la pestaña, y quien vuelva dentro del margen
+   * recupera su puesto exacto.
+   */
+  sale(clienteId, ahora){
     const c = this.clientes.get(clienteId);
-    // Si estaba jugando, su jugador NO se congela: se le suelta el asiento y
-    // la IA lo retoma en el mismo tick, sin que se note. El partido no se
-    // interrumpe nunca porque alguien cierre la pestaña.
-    if(c && c.seatId != null){
-      const h = this.m.S.humans.find(x => x.seatId === c.seatId);
+    this.clientes.delete(clienteId);
+    if(!c) return;
+    const a = this.asientos.get(c.userId);
+    if(a && a.seatId != null){
+      const h = this.m.S.humans.find(x => x.seatId === a.seatId);
       if(h){
-        const p = this.m.teams[h.team].find(j => j.ownerSeat === h.seatId);
-        if(p) p.ownerSeat = null;
+        // se sueltan TODOS los que figuren a su nombre, no sólo el primero
+        for(const arr of this.m.teams) for(const p of arr)
+          if(p.ownerSeat === h.seatId) p.ownerSeat = null;   // la IA los retoma en el acto
         h.playerId = null;
-        h.libre = true;                      // reclamable si vuelve
+        h.ausente = true;                    // y no se le asigna ninguno más
       }
     }
-    this.clientes.delete(clienteId);
+    if(a) a.ausenteDesde = ahora;
+    // en el lobby, irse es irse: el puesto queda libre para otro
+    if(this.fase === 'lobby' && a) this.asientos.delete(c.userId);
+    this.revisarAnfitrion();
+    if(this.vacia) this.vaciaDesde = ahora;
+  }
+
+  /** Se olvidan los asientos de quien lleve demasiado sin volver. */
+  caducar(ahora, margenMs){
+    let cambios = 0;
+    for(const [uid, a] of this.asientos){
+      if(this.presente(uid)) continue;
+      if(a.ausenteDesde && ahora - a.ausenteDesde > margenMs){ this.asientos.delete(uid); cambios++; }
+    }
+    if(cambios) this.revisarAnfitrion();
+    return cambios;
   }
 
   /** Reclamar equipo y puesto. El servidor decide; el cliente sólo pide. */
@@ -57,29 +141,55 @@ export class Sala {
     const c = this.clientes.get(clienteId);
     if(!c) return { ok: false, motivo: 'no estás en la sala' };
     if(this.fase !== 'lobby') return { ok: false, motivo: 'el partido ya empezó' };
-    for(const [id, o] of this.clientes)
-      if(id !== clienteId && o.equipo === equipo && o.puesto === puesto)
+    const mio = this.asientos.get(c.userId);
+    if(!mio) return { ok: false, motivo: 'no tenés sitio en esta sala' };
+    for(const [uid, o] of this.asientos)
+      if(uid !== c.userId && o.equipo === equipo && o.puesto === puesto)
         return { ok: false, motivo: 'ese puesto ya está tomado' };
-    c.equipo = equipo; c.puesto = puesto;
+    mio.equipo = equipo; mio.puesto = puesto; mio.listo = false;   // cambiar de puesto des-lista
     return { ok: true };
   }
 
-  /** Arranca el partido: los clientes con puesto se vuelven asientos. */
-  arrancar(){
-    const conPuesto = [...this.clientes.entries()].filter(([, c]) => c.equipo != null);
-    if(!conPuesto.length) return false;
+  /** Decir "estoy listo", o dejar de estarlo. */
+  marcarListo(clienteId, listo){
+    const c = this.clientes.get(clienteId);
+    const a = c && this.asientos.get(c.userId);
+    if(!a || a.equipo == null) return false;   // sin puesto no se puede estar listo
+    a.listo = !!listo;
+    return true;
+  }
+
+  /** El anfitrión puede echar a alguien de la sala. */
+  echar(clienteId, userId){
+    const c = this.clientes.get(clienteId);
+    if(!c || c.userId !== this.anfitrion) return { ok:false, motivo:'sólo el anfitrión puede echar' };
+    if(userId === this.anfitrion)            return { ok:false, motivo:'no podés echarte a vos' };
+    if(!this.asientos.has(userId))           return { ok:false, motivo:'esa persona no está' };
+    this.asientos.delete(userId);
+    for(const [id, o] of this.clientes) if(o.userId === userId) return { ok:true, echado:id };
+    return { ok:true, echado:null };
+  }
+
+  /** Arranca el partido: las cuentas con puesto se vuelven asientos del núcleo. */
+  arrancar(clienteId){
+    const quien = this.clientes.get(clienteId);
+    if(!quien) return { ok:false, motivo:'no estás en la sala' };
+    if(quien.userId !== this.anfitrion) return { ok:false, motivo:'sólo el anfitrión empieza el partido' };
+    const conPuesto = [...this.asientos.entries()].filter(([, a]) => a.equipo != null);
+    if(!conPuesto.length) return { ok:false, motivo:'nadie eligió puesto' };
+    if(!this.todosListos) return { ok:false, motivo:'falta gente por decir que está lista' };
 
     usarPartido(this.m);
     this.m.S.homeTeam = TEAMS[0];
     this.m.S.awayTeam = TEAMS[4];
     this.m.S.humans = [];
     crearHumanos(conPuesto.length);
-    conPuesto.forEach(([id, c], i) => {
+    conPuesto.forEach(([uid, a], i) => {
       const h = this.m.S.humans[i];
-      h.team = c.equipo; h.slot = c.puesto; h.nombre = c.nombre;
-      h.controllerId = id;               // en local era el dispositivo; aquí, la conexión
-      h.userId = c.userId;               // y la cuenta, que sobrevive a la conexión
-      c.seatId = h.seatId;
+      h.team = a.equipo; h.slot = a.puesto; h.nombre = a.nombre;
+      h.userId = uid;                    // el vínculo que sobrevive a la conexión
+      h.ausente = !this.presente(uid);
+      a.seatId = h.seatId;
     });
     spawnTeams();
     reiniciarEstad(this.m);
@@ -88,14 +198,16 @@ export class Sala {
     this.m.S.running = true;
     this.fase = 'jugando';
     this.acumulador = 0;
-    return true;
+    return { ok:true };
   }
 
   /** Un comando de un cliente va a la cola de SU asiento y de ningún otro. */
   comando(clienteId, cmd){
     const c = this.clientes.get(clienteId);
-    if(!c || c.seatId == null || this.fase !== 'jugando') return;
-    const h = this.m.S.humans.find(x => x.seatId === c.seatId);
+    if(!c || this.fase !== 'jugando') return;
+    const a = this.asientos.get(c.userId);
+    if(!a || a.seatId == null) return;
+    const h = this.m.S.humans.find(x => x.seatId === a.seatId);
     if(!h) return;
     // Saneado: un cliente hostil puede mandar cualquier cosa.
     const mx = Math.max(-1, Math.min(1, +cmd.mx || 0));
@@ -132,9 +244,9 @@ export class Sala {
   snapshot(){
     const s = tomarSnapshot(this.m.teams, this.m.bola);
     const ack = {};
-    for(const [, c] of this.clientes) if(c.seatId != null){
-      const h = this.m.S.humans.find(x => x.seatId === c.seatId);
-      ack[c.seatId] = h ? h.entrada.ultimoSeq : -1;
+    for(const [, a] of this.asientos) if(a.seatId != null){
+      const h = this.m.S.humans.find(x => x.seatId === a.seatId);
+      ack[a.seatId] = h ? h.entrada.ultimoSeq : -1;
     }
     return {
       tick: this.m.simTick, b: s.b, j: s.j, ack,

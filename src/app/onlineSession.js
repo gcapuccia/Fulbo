@@ -25,23 +25,31 @@ export function crearSesionOnline({ url, nombre }){
   let eventos = [];
   let seq = 0;
 
+  let reintento = 0, reconectando = false, quiereEstar = null;   // código al que volver
+
   const s = {
     bus, codigo: null, clienteId: null, seatId: null,
     cuenta: null,              // { userId, nombre } una vez identificado
-    jugadores: [], fase: 'lobby', ack: -1, ping: 0,
+    jugadores: [], salasPublicas: [], anfitrion: null,
+    fase: 'lobby', ack: -1, ping: 0, caida: false,
     ultimo: null,              // último snapshot crudo (marcador, reloj, fase)
 
     async conectar(){
       await bus.conectar();
       bus.al('sesion', m => { s.cuenta = { userId: m.userId, nombre: m.nombre };
                               guardarSesion(m.token, m.nombre); })
-         .al('bienvenida', m => { s.codigo = m.codigo; s.clienteId = m.clienteId; })
+         .al('bienvenida', m => { s.codigo = m.codigo; s.clienteId = m.clienteId;
+                                  quiereEstar = m.codigo;              // a dónde volver si se cae
+                                  if(m.fase) s.fase = m.fase; })
          .al('sala',       m => { s.jugadores = m.jugadores; s.fase = m.fase;
-                                  const yo = m.jugadores.find(j => j.clienteId === s.clienteId);
+                                  s.anfitrion = m.anfitrion;
+                                  const yo = m.jugadores.find(j => j.userId === s.cuenta?.userId);
                                   if(yo && yo.seatId != null) s.seatId = yo.seatId; })
-         .al('arranque',   m => { const yo = m.asientos.find(a => a.clienteId === s.clienteId);
+         .al('lista',      m => { s.salasPublicas = m.salas; })
+         .al('arranque',   m => { const yo = m.asientos.find(a => a.userId === s.cuenta?.userId);
                                   if(yo) s.seatId = yo.seatId;
                                   s.fase = 'jugando'; buffer.length = 0; reloj = 0; })
+         .al('expulsado',  () => { s.codigo = null; quiereEstar = null; s.fase = 'lobby'; })
          .al('estado',     m => {
               s.ultimo = m;
               if(s.seatId != null && m.ack) s.ack = m.ack[s.seatId] ?? s.ack;
@@ -59,6 +67,12 @@ export function crearSesionOnline({ url, nombre }){
       return s;
     },
 
+    pedirSalas(){ bus.enviar('salas', {}); },
+    preparado(listo){ bus.enviar('preparado', { listo }); },
+    echar(userId){ bus.enviar('echar', { userId }); },
+    dejarSala(){ bus.enviar('dejar', {}); s.codigo = null; quiereEstar = null; s.fase = 'lobby'; },
+    get soyAnfitrion(){ return !!s.cuenta && s.anfitrion === s.cuenta.userId; },
+
     registrar(nombre, clave){ bus.enviar('registro', { nombre, clave }); },
     identificarse(nombre, clave){ bus.enviar('entrar', { nombre, clave }); },
     cerrarSesion(){
@@ -68,9 +82,9 @@ export function crearSesionOnline({ url, nombre }){
     },
 
     crearSala(){ bus.enviar('unir', {}); },
-    unirseA(codigo){ bus.enviar('unir', { codigo }); },
+    unirseA(codigo){ quiereEstar = codigo; bus.enviar('unir', { codigo }); },
     pedirAsiento(equipo, puesto){ bus.enviar('asiento', { equipo, puesto }); },
-    empezar(){ bus.enviar('listo'); },
+    empezar(){ bus.enviar('empezar', {}); },
     medirPing(){ bus.enviar('ping', { t0: performance.now() }); },
 
     /** Manda lo que el jugador está apretando. Igual que en local, pero por cable. */
@@ -99,7 +113,36 @@ export function crearSesionOnline({ url, nombre }){
     },
 
     drenarEventos(){ const e = eventos; eventos = []; return e; },
-    cerrar(){ bus.cerrar(); },
+    cerrar(){ quiereEstar = null; reconectando = false; bus.cerrar(); },
+
+    /**
+     * RECONEXIÓN. Se le cayó la conexión, no la partida: el servidor guarda el
+     * asiento un minuto y mientras tanto la IA juega ese jugador, así que los
+     * demás siguen jugando sin esperar a nadie. Al volver, basta con
+     * identificarse y pedir la misma sala: el servidor reconoce la cuenta y
+     * devuelve el puesto exacto.
+     */
+    async intentarVolver(alCambiar){
+      if(reconectando) return;
+      reconectando = true; s.caida = true;
+      while(reconectando && reintento < 8){
+        const espera = Math.min(1000 * 2 ** reintento, 10000);
+        alCambiar?.(`Se cortó la conexión. Reintentando en ${Math.round(espera/1000)} s…`);
+        await new Promise(r => setTimeout(r, espera));
+        reintento++;
+        try {
+          await s.conectar();                    // reanuda la sesión guardada sola
+          await new Promise(r => setTimeout(r, 400));
+          if(quiereEstar) bus.enviar('unir', { codigo: quiereEstar });
+          reconectando = false; reintento = 0; s.caida = false;
+          alCambiar?.('Reconectado.');
+          return true;
+        } catch {}
+      }
+      reconectando = false;
+      alCambiar?.('No se pudo reconectar.');
+      return false;
+    },
   };
   return s;
 }

@@ -12,9 +12,10 @@ function cliente(nombre){
   const c = { ws, nombre, codigo:null, id:null, estados:[], eventos:[], seq:0, seatId:null };
   ws.on('message', b => {
     const m = JSON.parse(b);
+    if(m.t === S.SESION)     c.userId = m.userId;
     if(m.t === S.BIENVENIDA){ c.codigo = m.codigo; c.id = m.clienteId; }
-    if(m.t === S.SALA){ const yo = m.jugadores.find(j=>j.clienteId===c.id); if(yo) c.seatId = yo.seatId; }
-    if(m.t === S.ARRANQUE){ const yo = m.asientos.find(a=>a.clienteId===c.id); if(yo) c.seatId = yo.seatId; }
+    if(m.t === S.SALA){ const yo = m.jugadores.find(j=>j.userId===c.userId); if(yo) c.seatId = yo.seatId; }
+    if(m.t === S.ARRANQUE){ const yo = m.asientos.find(a=>a.userId===c.userId); if(yo) c.seatId = yo.seatId; }
     if(m.t === S.ESTADO) c.estados.push(m);
     if(m.t === S.EVENTOS) c.eventos.push(...m.lista);
     if(m.t === S.ERROR) console.log(`  ! ${nombre}: ${m.motivo}`);
@@ -27,10 +28,14 @@ function cliente(nombre){
 const a = cliente('Ana'), b = cliente('Beto');
 await Promise.all([a.listo, b.listo]);
 
-a.envia(C.UNIR, { nombre:'Ana' });
+a.envia(C.REGISTRO, { nombre:'ana'+Math.floor(Math.random()*1e5), clave:'clave-de-prueba-larga' });
+await espera(400);
+a.envia(C.UNIR, {});
 await espera(200);
 console.log(`sala creada: ${a.codigo}`);
-b.envia(C.UNIR, { codigo:a.codigo, nombre:'Beto' });
+b.envia(C.REGISTRO, { nombre:'beto'+Math.floor(Math.random()*1e5), clave:'clave-de-prueba-larga' });
+await espera(400);
+b.envia(C.UNIR, { codigo:a.codigo });
 await espera(200);
 
 a.envia(C.ASIENTO, { equipo:0, puesto:9 });
@@ -42,7 +47,10 @@ console.log(`asientos: Ana=${a.seatId} Beto=${b.seatId}`);
 b.envia(C.ASIENTO, { equipo:0, puesto:9 });
 await espera(200);
 
-a.envia(C.LISTO);
+a.envia(C.PREPARADO, { listo:true });
+b.envia(C.PREPARADO, { listo:true });
+await espera(300);
+a.envia(C.EMPEZAR);
 await espera(300);
 
 // Ana corre hacia adelante y pega un pase; Beto se queda quieto

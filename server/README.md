@@ -32,6 +32,43 @@ npm run dev          # ws://localhost:2567
 - **Desconectarse no interrumpe el partido**: se suelta el asiento y la IA
   retoma a ese jugador en el mismo tick.
 
+## Lobby, anfitrión y reconexión
+
+**La sala es una máquina de estados del servidor**, no del cliente. Todo lo
+que en el juego local decidía el DOM —quién juega, en qué puesto, cuándo se
+empieza— aquí lo decide el servidor, porque es lo único en lo que se puede
+confiar.
+
+- **Lista de salas abiertas** (`salas`): se puede entrar sin que nadie te pase
+  un código. Las salas sin nadie conectado no se ofrecen.
+- **Anfitrión**: quien creó la sala. Sólo el anfitrión empieza el partido y
+  sólo el anfitrión puede echar a alguien. Si se va, el mando pasa al
+  siguiente que siga conectado.
+- **Listo**: nadie empieza hasta que todos los que tienen puesto dicen que sí.
+  Cambiar de puesto te des-lista, para que nadie arranque con la formación de
+  otro.
+
+### Reconexión
+
+Los **asientos son de la cuenta, no de la conexión** — por eso viven en un Map
+aparte indexado por `userId`. Cuando se cae una conexión:
+
+1. El asiento **no** se borra: se marca ausente y se le sueltan los jugadores.
+2. La IA los retoma **en el mismo tick**. Nadie espera a un jugador congelado.
+3. Durante un minuto, quien vuelva con esa cuenta recupera su puesto exacto.
+4. Una sala vacía tampoco se cierra en el acto: aguanta minuto y medio por si
+   a todos se les cayó internet a la vez.
+
+El cliente reintenta solo, con espera creciente (1, 2, 4… hasta 10 s), y
+enseña un cartel que dice justamente eso: que el partido no se detiene.
+
+> Un detalle que costó encontrar: un asiento ausente **volvía a recibir
+> jugador** desde la simulación, porque el cambio automático de jugador al
+> recuperar el balón no miraba si esa persona seguía ahí. El resultado era un
+> jugador plantado en el césped en vez de uno llevado por la IA. La guarda
+> está en `asignarControl` del núcleo, y se comprobó quitándola: sin ella, en
+> el tick 1187 el asiento vacío recuperaba al jugador 105.
+
 ## Cuentas
 
 Jugar solo, el torneo o cuatro personas en la misma máquina **no** piden

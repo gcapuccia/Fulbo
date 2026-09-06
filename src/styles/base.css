@@ -333,3 +333,28 @@
 .cuentacab button{margin-left:auto;padding:5px 10px;border:none;border-radius:7px;cursor:pointer;
   font-size:10px;font-weight:800;background:#ffffff16;color:#fff;font-family:inherit;}
 #online .perfilbox label{margin-top:0;}
+
+#onPublicas{margin-top:12px;max-height:190px;overflow:auto;border-radius:10px;}
+.salapub{display:flex;align-items:center;gap:10px;padding:9px 13px;font-size:12px;
+  background:#0e172599;border-top:1px solid #ffffff0d;cursor:pointer;transition:.12s;}
+.salapub:first-child{border-top:none;}
+.salapub:hover{background:#16233a;}
+.salapub b{letter-spacing:3px;color:var(--acento);font-size:14px;}
+.salapub .gente{margin-left:auto;opacity:.7;}
+.salapub .jugando{color:#7fe08a;}
+.salarow .marcas{display:flex;gap:6px;align-items:center;margin-left:auto;}
+.marca{font-size:9px;letter-spacing:1px;text-transform:uppercase;padding:3px 7px;
+  border-radius:20px;background:#ffffff14;}
+.marca.listo{background:#2e7d4a;color:#eaffef;}
+.marca.jefe{background:var(--acento);color:#1a1206;}
+.marca.fuera{background:#7a2b2b;color:#ffe9e9;}
+.salarow button.echar{border:none;border-radius:6px;cursor:pointer;font-size:9px;
+  font-weight:800;padding:3px 7px;background:#7a2b2b;color:#fff;font-family:inherit;}
+#onListo.si{background:linear-gradient(180deg,#7fe08a,#2e7d4a);color:#08210f;}
+#netcaida{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
+  background:#03070ccc;backdrop-filter:blur(3px);}
+#netcaida .nb{background:#0d1826;border-radius:14px;padding:22px 28px;text-align:center;
+  box-shadow:0 20px 60px #000a;max-width:340px;}
+#netcaida b{display:block;font-size:16px;letter-spacing:1px;margin-bottom:8px;}
+#netcaida span{display:block;font-size:13px;color:var(--acento);margin-bottom:10px;}
+#netcaida small{display:block;font-size:11px;opacity:.6;line-height:1.5;}

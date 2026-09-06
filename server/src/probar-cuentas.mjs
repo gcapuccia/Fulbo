@@ -37,7 +37,7 @@ const b = cli(); await b.listo;
 b.env(C.SESION, { token: a.token }); await espera(300);
 ok(!!b.token, 'se puede reanudar la sesión con el token guardado');
 b.env(C.UNIR, { codigo: a.codigo }); await espera(400);
-ok(b.errores.some(e=>/ya está en la sala/.test(e)), 'la misma cuenta no entra dos veces a la sala');
+ok(b.errores.some(e=>/ya está abierta en la sala/.test(e)), 'la misma cuenta no se abre dos veces en la sala');
 
 // otra cuenta sí
 const c2 = cli(); await c2.listo;
