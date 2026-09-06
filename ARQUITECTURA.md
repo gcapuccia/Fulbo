@@ -489,7 +489,14 @@ class MatchRoom { onCreate(opts){ this.match = createMatch(opts, seed); } }
 - **Entrar:** `client.joinOrCreate('match')` (partida rápida) · `client.joinById('K7M2')` (código de 4-5 letras que compartís por WhatsApp) · `LobbyRoom` con la lista pública.
 - **Asientos:** cada cliente reclama un asiento (equipo + puesto) con la misma UI de `renderPlayersCfg`. Los puestos sin humano los mueve la IA que ya tenés.
 - **Desconexión:** `seat.controllerId = null` → la IA retoma ese jugador **instantáneamente e invisiblemente**. `allowReconnection(30s)` para volver al mismo puesto. El partido no se interrumpe nunca.
-- **Capacidad, medida honestamente:** `separarJugadores` es O(n²) sobre 22 con 4 iteraciones, `updateAI` hace escaneos de rival más cercano dentro de su bucle, `tryPossession` recorre los 22. Realista: **0.2-0.5 ms/tick/sala**, o sea **~25-40 salas por núcleo** antes de saturar el presupuesto de 16.6 ms, y eso antes de serializar y escribir sockets. No son "cientos". **Medí `process.cpuUsage()` con 10 salas ANTES de anunciar el modo online.**
+- **Capacidad, MEDIDA de verdad (2026-09-06, tras extraer el núcleo):**
+  `node scripts/salas-bench.mjs 40 600` da **7.4 µs por tick y sala**: cuarenta
+  salas simultáneas consumen el **1.78 %** del presupuesto de 16.6 ms. El techo
+  de simulación pura en este núcleo es de unas **2200 salas**, no de 25-40. La
+  estimación de abajo era pesimista por un factor de ~50. Lo que va a limitar
+  de verdad no es simular: es serializar y escribir sockets, y eso todavía no
+  está medido. Un partido entero de 90 s corre en **76 ms** (`node scripts/sim90.mjs`).
+- *(estimación original, conservada para comparar)* **Capacidad, medida honestamente:** `separarJugadores` es O(n²) sobre 22 con 4 iteraciones, `updateAI` hace escaneos de rival más cercano dentro de su bucle, `tryPossession` recorre los 22. Realista: **0.2-0.5 ms/tick/sala**, o sea **~25-40 salas por núcleo** antes de saturar el presupuesto de 16.6 ms, y eso antes de serializar y escribir sockets. No son "cientos". **Medí `process.cpuUsage()` con 10 salas ANTES de anunciar el modo online.**
 - **Empezá por 1v1 o 2v2 + IA.** Si arrancás por 11v11 online, el proyecto se estanca en el lobby y nunca llegás a jugar.
 
 ### Hosting
