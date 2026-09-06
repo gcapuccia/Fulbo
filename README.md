@@ -169,6 +169,48 @@ Conecta el mando y pulsa cualquier botón para que el juego lo detecte
   queda suelto un 10,7 % del tiempo en vez de un 15,2 %, con el defensa por
   delante el 58,7 % de las veces en vez del 53,9 %.
 
+## 🌐 Jugar online (salas)
+
+El partido lo simula un servidor; los clientes mandan lo que aprietan y
+dibujan lo que contesta. Nadie puede hacer trampa moviendo su jugador desde la
+consola: el servidor es la única autoridad sobre el balón, la posesión, las
+faltas, las tarjetas, el reloj y hasta sobre quién controla a qué jugador.
+
+```bash
+cd server && npm install     # una sola vez
+npm run servidor             # desde la raíz: ws://localhost:2567
+npm run dev                  # el juego, en otra terminal
+```
+
+En el menú, **🌐 Jugar online** → *Crear sala* te da un código de cuatro
+letras (ej. `HNF4`). Quien quiera jugar entra con ese código, cada uno elige
+equipo y puesto, y uno pulsa *Empezar partido*. Los puestos que nadie tome los
+juega la IA de siempre, así que una sala es jugable con dos personas o con
+ocho — no hacen falta 22.
+
+Si alguien cierra la pestaña, su jugador **no se queda plantado**: se libera
+el asiento y la IA lo retoma en el mismo tick. El partido no se interrumpe.
+
+Para apuntar a un servidor que no sea el de tu máquina:
+`VITE_SERVIDOR=wss://tu-servidor npm run build`.
+
+### Comprobado, no supuesto
+
+- Dos pestañas en la sala `HNF4`: sobre 35 ticks comunes, la huella del estado
+  que recibió cada una es la **misma** (`9ffac5ea`). Ven exactamente el mismo
+  partido.
+- Un gol marcado por una persona aparece en la otra pantalla con su cartel y
+  su marcador.
+- `node scripts/sim90.mjs`: 90 s de partido en Node en **76 ms**, con el mismo
+  hash que el navegador (`f25882e0`).
+- `node scripts/salas-bench.mjs 40 600`: **7,4 µs por tick y sala**; cuarenta
+  salas simultáneas usan el 1,78 % del presupuesto de 16,6 ms.
+
+Lo que **todavía no** hay: predicción del lado del cliente. Tu jugador
+responde con el retardo de la red (imperceptible en LAN, notorio a 100 ms).
+Es la Fase 9 del plan y el núcleo ya está preparado para ella —determinista y
+con el estado del azar dentro del partido—, pero no está hecha.
+
 ## 🎬 Cinemáticas
 
 - **Repetición de gol en cámara lenta** (0.45x) con cámara baja en travelling

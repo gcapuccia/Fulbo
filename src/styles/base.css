@@ -292,3 +292,38 @@
 .perfilbox input{width:100%;background:#0e1725;color:#fff;border:1px solid #ffffff22;
   border-radius:8px;padding:9px 11px;font-size:14px;font-family:inherit;}
 .perfilbox input:focus{outline:none;border-color:var(--acento);}
+
+/* ============================================================================
+   Salas online
+   ========================================================================== */
+#online{position:fixed;inset:0;z-index:47;overflow:auto;
+  background:radial-gradient(1400px 900px at 50% -10%,#16324f,#060a12 65%);}
+#online .ow{max-width:560px;margin:0 auto;padding:34px 20px 40px;}
+#online h1{font-size:32px;font-weight:900;letter-spacing:5px;text-align:center;
+  background:linear-gradient(180deg,#fff,#ffd23f 60%,#f39c12);
+  -webkit-background-clip:text;background-clip:text;color:transparent;}
+#online .ohint{text-align:center;opacity:.65;font-size:12px;margin:10px 0 18px;}
+.onfila{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;}
+.onfila button{padding:10px 16px;border:none;border-radius:9px;cursor:pointer;
+  font-weight:800;font-size:12px;font-family:inherit;background:#ffffff16;color:#fff;}
+.onfila button.prim{background:linear-gradient(180deg,#ffe066,#f39c12);color:#1a1206;}
+.onfila input{background:#0e1725;color:#fff;border:1px solid #ffffff22;border-radius:8px;
+  padding:9px 11px;font-size:14px;font-family:inherit;}
+.onlbl{display:flex;align-items:center;gap:6px;font-size:11px;opacity:.8;
+  text-transform:uppercase;letter-spacing:1px;}
+.onlbl select{background:#0e1725;color:#fff;border:1px solid #ffffff22;border-radius:8px;
+  padding:8px 10px;font-size:13px;font-family:inherit;}
+.salacab{display:flex;align-items:center;gap:10px;font-size:12px;opacity:.85;
+  margin:18px 0 10px;text-transform:uppercase;letter-spacing:2px;}
+.salacab b{font-size:22px;letter-spacing:6px;color:var(--acento);}
+.salacab button{padding:5px 10px;border:none;border-radius:7px;cursor:pointer;
+  font-size:10px;font-weight:800;background:#ffffff16;color:#fff;font-family:inherit;}
+.salacab .ping{margin-left:auto;opacity:.6;letter-spacing:0;text-transform:none;}
+#onLista{background:#0c1626cc;border-radius:12px;overflow:hidden;box-shadow:0 14px 40px #0009;}
+.salarow{display:flex;align-items:center;justify-content:space-between;
+  padding:11px 16px;border-top:1px solid #ffffff0d;font-size:13px;}
+.salarow:first-child{border-top:none;}
+.salarow .puesto{opacity:.7;font-size:11px;}
+.salarow.yo b{color:var(--acento);}
+#netstate{position:fixed;left:12px;bottom:12px;z-index:20;font-size:11px;
+  background:#0b1422cc;border-radius:20px;padding:6px 12px;letter-spacing:1px;}

@@ -39,6 +39,7 @@ import { fijarActivo }                        from './core/activo.js';
 // `usarPartido()` cambie de partido, aquí se ve el nuevo sin hacer nada.
 import { BTN, crearComando, encolarComando } from './core/input.js';
 import { aMundo }                             from './input/cameraSpace.js';
+import { crearSesionOnline, botonesDe }       from './app/onlineSession.js';
 import { m, usarPartido, partidoActual,
          hashEstado, spawnTeams, placeKickoff, asignarControl, cycleFormation,
          goalDirZ, teamName, startSetPiece, sendOff, showCard, callOffside,
@@ -560,21 +561,31 @@ function animate(){
   requestAnimationFrame(animate);
   const frameDt=Math.min(G.clock.getDelta(), 0.25);
   if(m.S.running && !m.S.paused){
-    m.acumulador += frameDt;
-    let pasos=0;
-    // Se muestrea UNA VEZ POR TICK, no por frame: así el juego se comporta
-    // igual a 30 que a 240 Hz, y es lo mismo que hará el cliente online.
-    while(m.acumulador >= DT && pasos < MAX_PASOS){
-      pollInput(); stepSim(DT); m.acumulador -= DT; pasos++;
+    const enRed = online && online.fase === 'jugando';
+    if(enRed){
+      // ONLINE: no se simula nada aquí. Se manda lo que apretás y se dibuja
+      // lo que contesta el servidor, que es la única autoridad.
+      enviarEntradaOnline(frameDt);
+      aplicarEstadoOnline(frameDt);
+      presentar(anotarEventos(online.drenarEventos()));
+    } else {
+      posesOnline = null;
+      m.acumulador += frameDt;
+      let pasos=0;
+      // Se muestrea UNA VEZ POR TICK, no por frame: así el juego se comporta
+      // igual a 30 que a 240 Hz, y es lo mismo que hace el cliente online.
+      while(m.acumulador >= DT && pasos < MAX_PASOS){
+        pollInput(); stepSim(DT); m.acumulador -= DT; pasos++;
+      }
+      if(pasos === MAX_PASOS) m.acumulador = 0;   // se descarta el atraso en vez de acumularlo
+      // --- presentación: a la tasa del monitor, no del simulador ---
+      // los eventos del tick se vuelven imagen y sonido; de paso la vista se
+      // entera de quién ha pegado para animar el golpeo
+      presentar(anotarEventos(drenarEventos(m)));
     }
-    if(pasos === MAX_PASOS) m.acumulador = 0;   // se descarta el atraso en vez de acumularlo
-    // --- presentación: a la tasa del monitor, no del simulador ---
-    // los eventos del tick se vuelven imagen y sonido; de paso la vista se
-    // entera de quién ha pegado para animar el golpeo
-    presentar(anotarEventos(drenarEventos(m)));
 
     // --- REPETICIÓN: sólo vista. Graba instantáneas y las dibuja aparte ---
-    const enJuego = m.S.phase==='play' || m.S.phase==='kickoff' || m.S.phase==='falta';
+    const enJuego = !enRed && (m.S.phase==='play' || m.S.phase==='kickoff' || m.S.phase==='falta');
     if(enJuego) replayView.grabar(m.teams, m.bola, frameDt);
     if(m.S.phase==='goal' && m.S.phaseT > 2.6 && !replayView.activa && replayView.listo){
       if(replayView.iniciar()) document.getElementById('replayFx').classList.add('show');
@@ -588,11 +599,15 @@ function animate(){
     tickGestos(frameDt);               // el reloj del festejo corre una sola vez
     sincronizarAnillos(m.teams, m.S.humans);   // derivado de ownerSeat, no avisado
     for(let ti=0;ti<2;ti++)for(const p of m.teams[ti]){
-      syncPlayerView(p, frameDt,
-        posesRepeticion ? posesRepeticion.poses.get(p.playerId) : null,
+      // La pose externa (repetición o red) también le da la CADENCIA de
+      // carrera: sin ella, online los jugadores se deslizarían sin mover las
+      // piernas, porque su velocidad la conoce el servidor y no este cliente.
+      const pose = posesRepeticion ? posesRepeticion.poses.get(p.playerId)
+                 : posesOnline     ? posesOnline.poses.get(p.playerId) : null;
+      syncPlayerView(p, frameDt, pose,
         posesRepeticion ? posesRepeticion.bola : m.bola.pos);   // la cabeza mira al balón
     }
-    syncBallView(frameDt, posesRepeticion ? posesRepeticion.bola : null);
+    syncBallView(frameDt, posesRepeticion ? posesRepeticion.bola : null);   // online ya escribió m.bola
     updateConfetti(frameDt);
     updateCrowd(frameDt);
     updateCamera(frameDt);
@@ -771,6 +786,138 @@ document.getElementById('toMenu').onclick=()=>{
 //  ARRANQUE
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
+//  ONLINE — salas
+// ---------------------------------------------------------------------------
+// El partido lo simula el servidor. Aquí sólo se manda lo que apretás y se
+// dibuja lo que contesta. Todo el render, la cámara, el HUD y las animaciones
+// son EXACTAMENTE los mismos: leen el mismo objeto partido, sólo que lo llena
+// la red en vez de stepSim().
+const URL_SERVIDOR = import.meta.env.VITE_SERVIDOR || `ws://${location.hostname}:2567`;
+let online = null;              // sesión activa, o null si se juega local
+let posesOnline = null;
+
+const $on = id => document.getElementById(id);
+function estadoOnline(txt){ const e=$on('onEstado'); if(e) e.textContent = txt; }
+
+function abrirOnline(){
+  $on('online').classList.remove('hidden');
+  $on('menu').classList.add('hidden');
+  $on('onNombre').value = perfil.apodo || '';
+  const sel = $on('onPuesto');
+  sel.innerHTML = etiquetasSlots(m.S.formation[0])
+    .map((t,i)=> i===0 ? '' : `<option value="${i}">${t}</option>`).join('');
+  sel.value = '9';
+}
+function cerrarOnline(){
+  if(online){ online.cerrar(); online = null; }
+  $on('online').classList.add('hidden');
+  $on('menu').classList.remove('hidden');
+  $on('onSala').classList.add('hidden');
+}
+
+function pintarSala(){
+  if(!online) return;
+  $on('onSala').classList.remove('hidden');
+  $on('onCodSala').textContent = online.codigo || '····';
+  $on('onPing').textContent = online.ping ? `${online.ping} ms` : '';
+  const etiquetas = etiquetasSlots(m.S.formation[0]);
+  $on('onLista').innerHTML = online.jugadores.map(j => {
+    const yo = j.clienteId === online.clienteId;
+    const donde = j.equipo == null ? '<span class="puesto">sin puesto</span>'
+      : `<span class="puesto">${j.equipo===0?'Local':'Visitante'} · ${etiquetas[j.puesto]||j.puesto}</span>`;
+    return `<div class="salarow${yo?' yo':''}"><b>${j.nombre}${yo?' (vos)':''}</b>${donde}</div>`;
+  }).join('') || '<div class="salarow"><b>Nadie más todavía</b></div>';
+}
+
+async function conectarOnline(codigo){
+  const nombre = ($on('onNombre').value || 'Invitado').slice(0,16);
+  setApodo(nombre);
+  estadoOnline('Conectando…');
+  try {
+    online = crearSesionOnline({ url: URL_SERVIDOR, nombre });
+    online.bus.al('sala', () => pintarSala())
+              .al('bienvenida', () => { estadoOnline('Conectado.'); pintarSala(); })
+              .al('error', msg => estadoOnline('⚠ ' + msg.motivo))
+              .al('arranque', msg => arrancarPartidoOnline(msg))
+              .al('_cerrado', () => { estadoOnline('Se cortó la conexión.'); });
+    await online.conectar();
+    if(codigo) online.unirseA(codigo);
+    setInterval(() => { if(online) { online.medirPing(); pintarSala(); } }, 2000);
+  } catch(e){
+    online = null;
+    estadoOnline('No hay servidor en ' + URL_SERVIDOR + '. Levantalo con: cd server && npm run dev');
+  }
+}
+
+// El cliente crea los mismos 22 jugadores con sus mallas, pero NO los simula:
+// sus posiciones las va a escribir el servidor en cada snapshot.
+function arrancarPartidoOnline(msg){
+  ensureAudio();
+  limpiarMallas(G.scene); m.teams[0]=[]; m.teams[1]=[];
+  crearEquiposYMallas();
+  m.S.score=[0,0]; m.S.clock=0; m.S.half=1;
+  m.cards[0]={a:0,r:0}; m.cards[1]={a:0,r:0}; m.S.setPiece=null; limpiarEventos(m);
+  reiniciarGestos(); replayView.detener();
+  crearHumanos(msg.asientos.length);
+  msg.asientos.forEach((a,i) => {
+    const h = m.S.humans[i];
+    if(!h) return;
+    h.team = a.equipo; h.slot = a.puesto; h.nombre = a.nombre;
+  });
+  setupHUDTeams(); updateCardsUI(); buildStaminaUI();
+  m.S.phase='kickoff'; m.S.phaseT=0; m.S.running=true; m.S.paused=false;
+  $on('online').classList.add('hidden');
+  $on('menu').classList.add('hidden');
+  $on('hud').style.display='block';
+  playWhistle(1);
+}
+
+// Se manda UN comando por tick de simulación, no por frame: el servidor
+// consume uno por tick y a 144 Hz se le desbordaría la cola. Online siempre
+// se lee el teclado 1 (o el mando): cada persona juega en SU máquina.
+let _accRed = 0;
+function enviarEntradaOnline(frameDt){
+  _accRed += frameDt;
+  let n = 0;
+  while(_accRed >= DT && n < MAX_PASOS){
+    const r = leerDispositivo(pad.connected ? 'pad0' : 'teclado1');
+    const d = aMundo(r.mx, r.my);
+    online.enviarEntrada(d.x, d.z, botonesDe(r));
+    _accRed -= DT; n++;
+  }
+  if(n === MAX_PASOS) _accRed = 0;
+}
+
+// Dibuja el partido que manda el servidor: posiciones interpoladas, y el
+// marcador, el reloj y la fase tal cual vienen.
+function aplicarEstadoOnline(frameDt){
+  posesOnline = online.poses(frameDt);
+  const u = online.ultimo;
+  if(u){
+    m.S.score = u.marcador; m.S.clock = u.reloj; m.S.half = u.mitad; m.S.phase = u.fase;
+    // quién controla a quién lo decide el servidor, también para los anillos
+    const dueños = new Map(u.duenos);
+    for(const arr of m.teams) for(const p of arr)
+      p.ownerSeat = dueños.has(p.playerId) ? dueños.get(p.playerId) : null;
+  }
+  if(posesOnline){
+    for(const arr of m.teams) for(const p of arr){
+      const pose = posesOnline.poses.get(p.playerId);
+      if(pose){ p.pos.x = pose.x; p.pos.z = pose.z; p.facing = pose.facing; }
+    }
+    m.bola.pos.set(posesOnline.bola.x, posesOnline.bola.y, posesOnline.bola.z);
+  }
+}
+
+$on('playOnline').onclick = () => abrirOnline();
+$on('onSalir').onclick    = () => cerrarOnline();
+$on('onCrear').onclick    = () => conectarOnline(null);
+$on('onUnir').onclick     = () => conectarOnline(($on('onCodigo').value||'').trim().toUpperCase());
+$on('onTomar').onclick    = () => { if(online) online.pedirAsiento(+$on('onEquipo').value, +$on('onPuesto').value); };
+$on('onEmpezar').onclick  = () => { if(online) online.empezar(); else estadoOnline('Primero creá o entrá a una sala.'); };
+$on('onCopiar').onclick   = () => { if(online?.codigo) navigator.clipboard?.writeText(online.codigo); };
+
+// ---------------------------------------------------------------------------
 //  OPCIONES — reasignar controles
 // ---------------------------------------------------------------------------
 let devEditando = 'teclado1';
@@ -853,6 +1000,7 @@ function boot(){
     get camCalls(){return G.camCalls;}, get camDist(){return G.camLast;},
     get canvases(){return document.querySelectorAll('canvas').length;},
     get tick(){return m.simTick;},
+    get online(){return online;},          // sonda: sesión de red, si la hay
     LIGA, simularJornada, clasificacion, mostrarTorneo,
 
     // --- determinismo ---

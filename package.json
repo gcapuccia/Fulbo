@@ -8,7 +8,10 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "servidor": "node server/src/index.js",
+    "sim90": "node scripts/sim90.mjs",
+    "salas": "node scripts/salas-bench.mjs 40 600"
   },
   "dependencies": {
     "three": "0.160.0"

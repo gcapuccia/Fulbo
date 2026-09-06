@@ -16,6 +16,16 @@ export function tomarSnapshot(teams, bola){
   return { b: [bola.pos.x, bola.pos.y, bola.pos.z], j };
 }
 
+// La orientación es un ÁNGULO: interpolarla como un número normal hace que un
+// jugador que pasa de +179 a -179 grados gire 358 grados en vez de 2. Se toma
+// siempre el camino corto. A 20 Hz de snapshots esto se ve.
+function interpolarAngulo(a1, a2, t){
+  let d = a2 - a1;
+  while(d >  Math.PI) d -= Math.PI * 2;
+  while(d < -Math.PI) d += Math.PI * 2;
+  return a1 + d * t;
+}
+
 /**
  * Interpola dos instantáneas y devuelve las poses listas para dibujar.
  * `a` en 0, `b` en 1. Devuelve { bola:{x,y,z}, poses:Map(playerId -> {x,z,facing}) }.
@@ -36,7 +46,7 @@ export function interpolarSnapshot(s1, s2, a){
     poses.set(id, {
       x: m(s1.j[k+1], s2.j[k2+1]),
       z: m(s1.j[k+2], s2.j[k2+2]),
-      facing: s1.j[k+3],
+      facing: interpolarAngulo(s1.j[k+3], s2.j[k2+3], a),
     });
   }
   return {

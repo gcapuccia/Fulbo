@@ -58,6 +58,7 @@
       </div>
         <button id="play">▶ Partido amistoso</button>
       <button id="playLiga">🏆 Jugar torneo</button>
+      <button id="playOnline">🌐 Jugar online</button>
       <button id="playOpciones">⚙ Opciones · Controles</button>
     </div>
     <div class="picker">
@@ -109,6 +110,50 @@
     <div class="obtns">
       <button id="resetBinds">Restaurar por defecto</button>
       <button id="cerrarOpciones" class="prim">Volver</button>
+    </div>
+  </div>
+</div>
+
+<!-- Online: salas -->
+<div id="online" class="hidden">
+  <div class="ow">
+    <h1>SALAS</h1>
+    <p class="ohint">Creá una sala y pasale el código a quien quiera jugar,
+    o entrá con el código que te pasaron.</p>
+
+    <div class="perfilbox">
+      <label for="onNombre">Tu nombre</label>
+      <input id="onNombre" type="text" maxlength="16" placeholder="Invitado" autocomplete="off">
+      <div class="onfila">
+        <button id="onCrear" class="prim">Crear sala</button>
+        <input id="onCodigo" type="text" maxlength="5" placeholder="CÓDIGO" autocomplete="off"
+               style="text-transform:uppercase;text-align:center;letter-spacing:4px;max-width:130px">
+        <button id="onUnir">Entrar</button>
+      </div>
+      <p class="ohint" id="onEstado" style="margin:10px 0 0">Sin conectar.</p>
+    </div>
+
+    <div id="onSala" class="hidden">
+      <div class="salacab">
+        <span>Sala</span><b id="onCodSala">····</b>
+        <button id="onCopiar" title="Copiar el código">copiar</button>
+        <span class="ping" id="onPing"></span>
+      </div>
+      <div id="onLista"></div>
+      <div class="onfila">
+        <label class="onlbl">Equipo
+          <select id="onEquipo"><option value="0">Local</option><option value="1">Visitante</option></select>
+        </label>
+        <label class="onlbl">Puesto
+          <select id="onPuesto"></select>
+        </label>
+        <button id="onTomar">Tomar puesto</button>
+      </div>
+    </div>
+
+    <div class="obtns">
+      <button id="onEmpezar" class="prim">▶ Empezar partido</button>
+      <button id="onSalir">Volver</button>
     </div>
   </div>
 </div>
